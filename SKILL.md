@@ -9,6 +9,7 @@ description: |
   - User needs to create a task with specific skills (deep research, PDF, data analysis, etc.)
   - User wants to poll task status until completion
   - User needs to send follow-up prompts to a running task
+  - User wants to share task results with end users via a public link
   - User wants to run multiple tasks concurrently or in the same workspace
 
   Requires a REBYTE_API_KEY environment variable.
@@ -19,6 +20,44 @@ description: |
 Run coding agents like Claude Code, Gemini CLI, or Codex with specific skills -- all from a single API key. No local setup, no CLI installation, no configuration files. Each task gets its own isolated cloud environment with the skills you need.
 
 If you want to run a coding agent on a task and have it use specific skills (deep research, PDF processing, data analysis, etc.), this is for you. As long as you have a `REBYTE_API_KEY`, you can fire off as many tasks as you want without touching any local settings.
+
+## Task Lifecycle
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     TASK LIFECYCLE                           │
+│                                                             │
+│  1. CREATE           2. RUN              3. SHARE           │
+│  ┌──────────┐       ┌──────────┐       ┌──────────┐        │
+│  │ POST     │       │ GET      │       │ PATCH    │        │
+│  │ /tasks   │──────▶│ /tasks/  │──────▶│ /tasks/  │        │
+│  │          │       │ :id      │       │ :id/     │        │
+│  │ prompt   │       │          │       │ visibility│       │
+│  │ skills   │       │ Poll     │       │          │        │
+│  │ executor │       │ until    │       │ → public │        │
+│  │ repo     │       │ complete │       │ → shareUrl│       │
+│  └──────────┘       └────┬─────┘       └──────────┘        │
+│       │                  │                   │              │
+│       ▼                  ▼                   ▼              │
+│  Task starts in     Status:              Share the URL     │
+│  its own VM         completed/failed     with anyone       │
+│                          │                                  │
+│                          ▼                                  │
+│                   ┌──────────┐                              │
+│                   │ POST     │  (optional)                  │
+│                   │ /tasks/  │                              │
+│                   │ :id/     │                              │
+│                   │ prompts  │                              │
+│                   │          │                              │
+│                   │ Follow up│                              │
+│                   └──────────┘                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**The full cycle:**
+1. **Create** a task with a prompt, skills, and optionally a GitHub repo
+2. **Run** it asynchronously — poll for completion or use webhooks
+3. **Share** the result — set visibility to `public` and hand the share URL to anyone
 
 ## Agent Instructions: Setup & Authentication
 
@@ -39,6 +78,7 @@ Before performing any action, check if the `REBYTE_API_KEY` environment variable
 | GET | /v1/tasks | List API-created tasks |
 | GET | /v1/tasks/:id | Get task with derived status and prompts |
 | POST | /v1/tasks/:id/prompts | Send a follow-up prompt |
+| PATCH | /v1/tasks/:id/visibility | Change task visibility (get share URL) |
 | DELETE | /v1/tasks/:id | Soft-delete a task |
 
 ## Quick Start
@@ -75,27 +115,26 @@ curl https://api.rebyte.ai/v1/tasks/$TASK_ID \
   -H "API_KEY: $REBYTE_API_KEY"
 ```
 
+### Share the result
+
+After the task completes, set visibility to `public` to get a shareable link:
+
+```bash
+curl -X PATCH https://api.rebyte.ai/v1/tasks/$TASK_ID/visibility \
+  -H "API_KEY: $REBYTE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"visibility": "public"}'
+```
+
 Response:
 ```json
 {
-  "id": "550e8400-e29b-41d4-a716-446655440000",
-  "url": "https://app.rebyte.ai/run/550e8400-e29b-41d4-a716-446655440000",
-  "status": "completed",
-  "title": "Security Analysis of Codebase",
-  "executor": "opencode",
-  "model": "lite",
-  "createdAt": "2026-02-09T10:30:00.000Z",
-  "completedAt": "2026-02-09T10:32:00.000Z",
-  "prompts": [
-    {
-      "id": "uuid-1",
-      "status": "succeeded",
-      "submittedAt": "2026-02-09T10:30:01.000Z",
-      "completedAt": "2026-02-09T10:32:00.000Z"
-    }
-  ]
+  "visibility": "public",
+  "shareUrl": "https://app.rebyte.ai/share/550e8400-e29b-41d4-a716-446655440000"
 }
 ```
+
+The `shareUrl` is viewable by anyone -- no login required.
 
 ### Send a follow-up
 
@@ -143,70 +182,48 @@ curl -X DELETE https://api.rebyte.ai/v1/tasks/$TASK_ID \
 # Returns 204 No Content
 ```
 
-## Using the Python Client
+## Full Lifecycle Example (Python)
 
 ```python
 from scripts.rebyte_client import RebyteClient
 
 client = RebyteClient()  # reads REBYTE_API_KEY from env
 
-# Create a task with skills
+# 1. CREATE — spawn a task with skills
 task = client.create_task(
-    prompt="Extract text from all PDFs in the repo",
-    skills=["pdf"]
+    prompt="Analyze this repo for security vulnerabilities",
+    skills=["deep-research"],
+    github_url="my-org/my-repo"
 )
-print(f"Task {task['id']} running: {task['url']}")
+print(f"Task started: {task['url']}")
 
-# Wait for completion
+# 2. RUN — wait for completion
 result = client.wait_for_task(task["id"])
 print(f"Status: {result['status']}")
 
-# Send a follow-up
-client.follow_up(task["id"], prompt="Now summarize the extracted text")
+# 3. SHARE — make it public and get the share URL
+visibility = client.set_visibility(task["id"], "public")
+print(f"Share this link: {visibility['shareUrl']}")
 
-# Wait again
-result = client.wait_for_task(task["id"])
-print(f"Done: {result['url']}")
-
-# Create another task in the same workspace (reuses VM)
-task2 = client.create_task(
-    prompt="Convert summaries to markdown",
-    workspace_id=task["workspaceId"]
-)
-result2 = client.wait_for_task(task2["id"])
-
-# Clean up
-client.delete_task(task["id"])
-client.delete_task(task2["id"])
-```
-
-## Using the CLI
-
-```bash
-# Create a task
-python3 scripts/rebyte_cli.py create --prompt "Analyze this repo" --skills deep-research
-
-# Get task status
-python3 scripts/rebyte_cli.py get TASK_ID
-
-# Send follow-up
-python3 scripts/rebyte_cli.py follow-up TASK_ID --prompt "Fix the issues"
-
-# List tasks
-python3 scripts/rebyte_cli.py list
-
-# Delete task
-python3 scripts/rebyte_cli.py delete TASK_ID
+# Done — anyone with that link can view the results
 ```
 
 ## Task Status
 
 | Status | Meaning |
-|--------|---------|
+|--------|--------|
 | `running` | Any prompt is pending or running |
 | `completed` | All prompts done, latest succeeded |
 | `failed` | All prompts done, latest failed |
 | `canceled` | All prompts done, latest canceled |
+
+## Visibility Levels
+
+| Level | Who can view |
+|-------|-------------|
+| `private` | Only the API key owner |
+| `shared` | All organization members (default) |
+| `public` | Anyone with the link (read-only) |
 
 ## Create Task Options
 

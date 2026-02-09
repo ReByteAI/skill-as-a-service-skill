@@ -1,15 +1,8 @@
-"""
-Rebyte API Client
+#!/usr/bin/env python3
+"""Rebyte API client -- stdlib only (no requests dependency)."""
 
-Simple client for the Rebyte v1 API:
-- Create tasks with skills
-- Poll for task completion
-- Send follow-up prompts
-- List and delete tasks
-"""
-
-import os
 import json
+import os
 import time
 import urllib.request
 import urllib.error
@@ -17,56 +10,65 @@ from typing import Any, Dict, List, Optional
 
 
 class APIError(Exception):
-    """Exception raised for API errors."""
-    def __init__(self, message: str, status_code: Optional[int] = None, response: Optional[Dict] = None):
-        self.message = message
+    def __init__(self, status_code: int, message: str):
         self.status_code = status_code
-        self.response = response
-        super().__init__(self.message)
+        self.message = message
+        super().__init__(f"HTTP {status_code}: {message}")
 
 
 class RebyteClient:
-    """Client for the Rebyte v1 API."""
+    """Minimal client for the Rebyte v1 API."""
 
-    def __init__(self, api_key: Optional[str] = None, base_url: str = "https://api.rebyte.ai"):
+    BASE_URL = "https://api.rebyte.ai/v1"
+
+    def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.environ.get("REBYTE_API_KEY")
         if not self.api_key:
-            raise ValueError("REBYTE_API_KEY environment variable is not set")
-        self.base_url = base_url.rstrip("/")
+            raise ValueError(
+                "API key required. Set REBYTE_API_KEY env var or pass api_key="
+            )
 
-    def _request(self, method: str, path: str, data: Optional[Dict] = None, params: Optional[Dict] = None) -> Dict[str, Any]:
-        """Make an API request using only stdlib (no requests dependency)."""
-        url = f"{self.base_url}{path}"
+    # ── helpers ──────────────────────────────────────────────
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        body: Optional[dict] = None,
+        params: Optional[dict] = None,
+    ) -> Any:
+        url = f"{self.BASE_URL}{path}"
         if params:
-            query = "&".join(f"{k}={v}" for k, v in params.items() if v is not None)
-            if query:
-                url = f"{url}?{query}"
+            qs = "&".join(f"{k}={v}" for k, v in params.items() if v is not None)
+            if qs:
+                url = f"{url}?{qs}"
 
-        body = json.dumps(data).encode() if data else None
-        req = urllib.request.Request(url, data=body, method=method)
+        data = json.dumps(body).encode() if body else None
+        req = urllib.request.Request(url, data=data, method=method)
         req.add_header("API_KEY", self.api_key)
-        req.add_header("Content-Type", "application/json")
+        if body:
+            req.add_header("Content-Type", "application/json")
 
         try:
-            with urllib.request.urlopen(req, timeout=300) as resp:
+            with urllib.request.urlopen(req) as resp:
                 if resp.status == 204:
-                    return {}
+                    return None
                 return json.loads(resp.read().decode())
         except urllib.error.HTTPError as e:
+            body_text = e.read().decode() if e.fp else ""
             try:
-                resp_data = json.loads(e.read().decode())
-            except Exception:
-                resp_data = {"raw": e.reason}
-            error_msg = resp_data.get("error", {}).get("message", str(resp_data))
-            raise APIError(message=error_msg, status_code=e.code, response=resp_data)
-        except urllib.error.URLError as e:
-            raise APIError(f"Network error: {e.reason}")
+                err = json.loads(body_text)
+                msg = err.get("error", {}).get("message", body_text)
+            except json.JSONDecodeError:
+                msg = body_text
+            raise APIError(e.code, msg)
 
-    # ---- Tasks ----
+    # ── public API ───────────────────────────────────────────
 
     def create_task(
         self,
         prompt: str,
+        *,
         executor: Optional[str] = None,
         model: Optional[str] = None,
         skills: Optional[List[str]] = None,
@@ -74,56 +76,75 @@ class RebyteClient:
         branch_name: Optional[str] = None,
         workspace_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Create a new task. Blocks until the VM is ready and the first prompt is sent."""
-        data: Dict[str, Any] = {"prompt": prompt}
+        """Create a task. Blocks until running."""
+        body: Dict[str, Any] = {"prompt": prompt}
         if executor:
-            data["executor"] = executor
+            body["executor"] = executor
         if model:
-            data["model"] = model
+            body["model"] = model
         if skills:
-            data["skills"] = skills
+            body["skills"] = skills
         if github_url:
-            data["githubUrl"] = github_url
+            body["githubUrl"] = github_url
         if branch_name:
-            data["branchName"] = branch_name
+            body["branchName"] = branch_name
         if workspace_id:
-            data["workspaceId"] = workspace_id
-        return self._request("POST", "/v1/tasks", data=data)
+            body["workspaceId"] = workspace_id
+        return self._request("POST", "/tasks", body=body)
 
     def get_task(self, task_id: str) -> Dict[str, Any]:
-        """Get task details with derived status and prompts."""
-        return self._request("GET", f"/v1/tasks/{task_id}")
+        """Get task with derived status and prompts."""
+        return self._request("GET", f"/tasks/{task_id}")
 
-    def list_tasks(self, limit: int = 50, offset: int = 0) -> Dict[str, Any]:
+    def list_tasks(
+        self, *, limit: int = 50, offset: int = 0
+    ) -> Dict[str, Any]:
         """List API-created tasks."""
-        return self._request("GET", "/v1/tasks", params={"limit": limit, "offset": offset})
+        return self._request(
+            "GET", "/tasks", params={"limit": limit, "offset": offset}
+        )
+
+    def follow_up(
+        self,
+        task_id: str,
+        prompt: str,
+        *,
+        skills: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Send a follow-up prompt."""
+        body: Dict[str, Any] = {"prompt": prompt}
+        if skills:
+            body["skills"] = skills
+        return self._request("POST", f"/tasks/{task_id}/prompts", body=body)
+
+    def set_visibility(
+        self, task_id: str, visibility: str
+    ) -> Dict[str, Any]:
+        """Change task visibility. Returns shareUrl when set to 'public'."""
+        return self._request(
+            "PATCH",
+            f"/tasks/{task_id}/visibility",
+            body={"visibility": visibility},
+        )
 
     def delete_task(self, task_id: str) -> None:
         """Soft-delete a task."""
-        self._request("DELETE", f"/v1/tasks/{task_id}")
+        self._request("DELETE", f"/tasks/{task_id}")
 
-    # ---- Follow-ups ----
-
-    def follow_up(self, task_id: str, prompt: str, skills: Optional[List[str]] = None) -> Dict[str, Any]:
-        """Send a follow-up prompt to an existing task."""
-        data: Dict[str, Any] = {"prompt": prompt}
-        if skills:
-            data["skills"] = skills
-        return self._request("POST", f"/v1/tasks/{task_id}/prompts", data=data)
-
-    # ---- Polling ----
-
-    def wait_for_task(self, task_id: str, timeout_seconds: int = 600, poll_interval: float = 3.0) -> Dict[str, Any]:
-        """Poll until task reaches a terminal status."""
-        start = time.time()
-        while True:
-            if time.time() - start > timeout_seconds:
-                raise TimeoutError(f"Task {task_id} timed out after {timeout_seconds}s")
-
-            result = self.get_task(task_id)
-            status = result.get("status", "")
-
-            if status in ("completed", "failed", "canceled"):
-                return result
-
+    def wait_for_task(
+        self,
+        task_id: str,
+        *,
+        poll_interval: float = 5.0,
+        timeout_seconds: float = 600.0,
+    ) -> Dict[str, Any]:
+        """Poll until task reaches a terminal state."""
+        deadline = time.time() + timeout_seconds
+        while time.time() < deadline:
+            task = self.get_task(task_id)
+            if task["status"] in ("completed", "failed", "canceled"):
+                return task
             time.sleep(poll_interval)
+        raise TimeoutError(
+            f"Task {task_id} did not complete within {timeout_seconds}s"
+        )

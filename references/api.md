@@ -141,6 +141,41 @@ Send a follow-up prompt to an existing task. The VM is resumed if stopped.
 
 ---
 
+### PATCH /v1/tasks/:id/visibility
+
+Change the visibility of a task. Tasks default to `shared` (visible to org members). Set to `public` to get a shareable link that anyone can view without authentication.
+
+**Request:**
+```json
+{
+  "visibility": "public"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| visibility | string | Yes | `private`, `shared`, or `public` |
+
+**Response:**
+```json
+{
+  "visibility": "public",
+  "shareUrl": "https://app.rebyte.ai/share/550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+The `shareUrl` field is only returned when visibility is `public`. Anyone with this URL can view the task results without logging in.
+
+**Visibility levels:**
+
+| Level | Who can view |
+|-------|-------------|
+| `private` | Only the API key owner |
+| `shared` | All organization members (default) |
+| `public` | Anyone with the link (read-only) |
+
+---
+
 ### DELETE /v1/tasks/:id
 
 Soft-delete a task.
@@ -152,7 +187,7 @@ Soft-delete a task.
 ## Task Status Values
 
 | Status | Condition |
-|--------|-----------|
+|--------|----------|
 | `running` | Any prompt is `pending` or `running` |
 | `completed` | All prompts terminal, latest is `succeeded` |
 | `failed` | All prompts terminal, latest is `failed` |

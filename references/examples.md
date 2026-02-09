@@ -1,5 +1,32 @@
 # Examples
 
+## Full Lifecycle: Create, Run, Share
+
+The complete task lifecycle in one example:
+
+```python
+from scripts.rebyte_client import RebyteClient
+
+client = RebyteClient()
+
+# 1. CREATE — spawn a task with skills
+task = client.create_task(
+    prompt="Analyze this repo for security vulnerabilities",
+    skills=["deep-research"],
+    github_url="my-org/my-repo"
+)
+print(f"Task started: {task['url']}")
+
+# 2. RUN — wait for completion
+result = client.wait_for_task(task["id"])
+print(f"Status: {result['status']}")
+
+# 3. SHARE — make it public and get the share URL
+visibility = client.set_visibility(task["id"], "public")
+print(f"Share this link: {visibility['shareUrl']}")
+# Anyone with that link can view the results — no login required
+```
+
 ## Basic: Create and Poll
 
 ```python
@@ -84,6 +111,29 @@ result = client.wait_for_task(task["id"])
 print(f"View all results: {result['url']}")
 ```
 
+## Share Results with End Users
+
+If your API creates tasks on behalf of end users who don't have accounts:
+
+```python
+# Run the task
+task = client.create_task(
+    prompt="Generate a report on Q4 sales data",
+    skills=["data-analysis"]
+)
+result = client.wait_for_task(task["id"])
+
+# Make it public so the end user can view it
+vis = client.set_visibility(task["id"], "public")
+
+# Send this URL to the end user (email, Slack, etc.)
+share_url = vis["shareUrl"]
+print(f"Report ready: {share_url}")
+
+# Later, revoke public access if needed
+client.set_visibility(task["id"], "private")
+```
+
 ## List and Manage Tasks
 
 ```python
@@ -122,6 +172,34 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
 
 for r in results:
     print(f"{r['title']}: {r['status']} - {r['url']}")
+```
+
+## Batch Processing with Shared Results
+
+Run tasks in parallel and share all results:
+
+```python
+import concurrent.futures
+
+client = RebyteClient()
+
+def run_and_share(prompt):
+    task = client.create_task(prompt=prompt, github_url="my-org/my-repo")
+    result = client.wait_for_task(task["id"])
+    vis = client.set_visibility(task["id"], "public")
+    return {"title": result["title"], "shareUrl": vis["shareUrl"]}
+
+prompts = [
+    "Security audit of auth module",
+    "Performance analysis of database queries",
+    "Code quality review of API layer",
+]
+
+with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+    results = list(executor.map(run_and_share, prompts))
+
+for r in results:
+    print(f"{r['title']}: {r['shareUrl']}")
 ```
 
 ## Sequential Tasks in Same Workspace
@@ -163,18 +241,16 @@ except TimeoutError as e:
 ## CLI Examples
 
 ```bash
-# Create a task
+# Full lifecycle
 python3 scripts/rebyte_cli.py create --prompt "Analyze this repo" --skills deep-research
-
-# Get task details
 python3 scripts/rebyte_cli.py get TASK_ID
+python3 scripts/rebyte_cli.py visibility TASK_ID --level public
+# → returns shareUrl
 
-# Send follow-up
+# Follow-up
 python3 scripts/rebyte_cli.py follow-up TASK_ID --prompt "Fix the issues"
 
-# List all tasks
+# List and delete
 python3 scripts/rebyte_cli.py list --limit 20
-
-# Delete a task
 python3 scripts/rebyte_cli.py delete TASK_ID
 ```

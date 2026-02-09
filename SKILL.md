@@ -7,6 +7,7 @@ description: |
   - User wants to run a coding agent with skills attached, without any local setup
   - User wants to fire off tasks to Claude Code (or other agents) from their own code
   - User needs to create a task with specific skills (deep research, PDF, data analysis, etc.)
+  - User wants the agent to work on uploaded files (PDFs, CSVs, docs, etc.)
   - User wants to share task results with end users via a public link
   - User wants to run multiple tasks concurrently or in the same workspace
 
@@ -22,35 +23,41 @@ If you want to run a coding agent on a task and have it use specific skills (dee
 ## Task Lifecycle
 
 ```
- 1. CREATE                  2. RETURN URL                3. SHARE (optional)
- ┌──────────────┐           ┌──────────────┐            ┌──────────────┐
- │ POST /tasks  │           │              │            │ PATCH        │
- │              │──────────▶│  Give the    │───────────▶│ /tasks/:id/  │
- │ prompt       │           │  task URL    │            │ visibility   │
- │ skills       │           │  to the user │            │              │
- │ executor     │           │              │            │ → public     │
- │ repo         │           │  They watch  │            │ → shareUrl   │
- └──────────────┘           │  it live     │            └──────────────┘
-                            └──────┬───────┘                   │
-                                   │                           ▼
-                                   │                    Anyone can view
-                                   │                    (no login needed)
-                                   │
-                          ┌────────▼───────┐
-                          │  Optional:     │
-                          │                │
-                          │  • Poll status │  GET /tasks/:id
-                          │  • Follow up   │  POST /tasks/:id/prompts
-                          │  • Reuse VM    │  POST /tasks (with workspaceId)
-                          └────────────────┘
+ 0. UPLOAD FILES (optional)     1. CREATE TASK            2. RETURN URL TO USER
+ ┌──────────────┐               ┌──────────────┐         ┌──────────────┐
+ │ POST /files  │               │ POST /tasks  │         │              │
+ │              │──┐            │              │────────▶│  Give the    │
+ │ Get signed   │  │            │ prompt       │         │  task URL    │
+ │ upload URL   │  │            │ skills       │         │  to the user │
+ └──────┬───────┘  │            │ files        │         │              │
+        │          │            │ executor     │         │  They watch  │
+        ▼          │            │ repo         │         │  it live     │
+ ┌──────────────┐  │            └──────────────┘         └──────┬───────┘
+ │ PUT {url}    │  │                   ▲                        │
+ │              │──┘                   │                        │
+ │ Upload file  │   pass {id,filename} ┘                        │
+ │ content      │                                               │
+ └──────────────┘                                               │
+                                                       ┌────────▼───────┐
+        3. SHARE (optional)                            │  Optional:     │
+        ┌──────────────┐                               │                │
+        │ PATCH        │                               │  • Poll status │
+        │ /tasks/:id/  │◀──────────────────────────────│  • Follow up   │
+        │ visibility   │                               │  • Reuse VM    │
+        │              │                               │  • Share       │
+        │ → public     │                               └────────────────┘
+        │ → shareUrl   │
+        └──────────────┘
 ```
 
-**The core flow is simple:**
-1. **Create** a task with a prompt, skills, and optionally a GitHub repo
-2. **Return the URL** to the user -- they can watch the task execute live in the browser
-3. **Optionally share** the result by setting visibility to `public` for a link anyone can view
+**The core flow:**
+1. **Upload files** (if the agent needs to work on your files) — get a signed URL, upload, pass the file IDs to the task
+2. **Create a task** with a prompt, skills, files, and optionally a GitHub repo
+3. **Return the URL** to the user — they can watch the task execute live in the browser
 
-You don't need to poll for completion. You don't even need to know when it finishes. The URL is live from the moment the task starts -- the user sees the agent working in real time.
+You don't need to poll for completion. You don't even need to know when it finishes. The URL is live from the moment the task starts — the user sees the agent working in real time.
+
+Optionally, **share** the result by setting visibility to `public` for a link anyone can view without logging in.
 
 ## Agent Instructions: Setup & Authentication
 
@@ -67,6 +74,7 @@ Before performing any action, check if the `REBYTE_API_KEY` environment variable
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
+| POST | /v1/files | Upload a file (get signed URL) |
 | POST | /v1/tasks | Create a task (blocks until running) |
 | GET | /v1/tasks | List API-created tasks |
 | GET | /v1/tasks/:id | Get task with derived status and prompts |
@@ -99,7 +107,36 @@ Response (201):
 }
 ```
 
-That's it. Give the `url` to the user -- they can watch the agent work in real time. The task runs in the cloud regardless of whether anyone is watching.
+That's it. Give the `url` to the user — they can watch the agent work in real time.
+
+### Upload files for the agent to work on
+
+If the agent needs to work on your files (PDFs, CSVs, docs, etc.):
+
+```bash
+# 1. Get a signed upload URL
+FILE=$(curl -s -X POST https://api.rebyte.ai/v1/files \
+  -H "API_KEY: $REBYTE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"filename": "report.pdf"}')
+
+# 2. Upload the file
+curl -X PUT "$(echo $FILE | jq -r '.uploadUrl')" \
+  -H "Content-Type: application/octet-stream" \
+  --data-binary @report.pdf
+
+# 3. Create a task with the file
+curl -X POST https://api.rebyte.ai/v1/tasks \
+  -H "API_KEY: $REBYTE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"prompt\": \"Summarize this PDF\",
+    \"skills\": [\"pdf\"],
+    \"files\": [{\"id\": $(echo $FILE | jq '.id'), \"filename\": $(echo $FILE | jq '.filename')}]
+  }"
+```
+
+The file is automatically copied into the task's isolated VM when the task starts.
 
 ### Make it shareable (optional)
 
@@ -120,7 +157,7 @@ Response:
 }
 ```
 
-The `shareUrl` is viewable by anyone -- no login required.
+The `shareUrl` is viewable by anyone — no login required.
 
 ### Poll for status (optional)
 
@@ -137,7 +174,7 @@ curl https://api.rebyte.ai/v1/tasks/$TASK_ID \
 curl -X POST https://api.rebyte.ai/v1/tasks/$TASK_ID/prompts \
   -H "API_KEY: $REBYTE_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"prompt": "Now fix the critical issues you found"}'
+  -d '{\"prompt\": \"Now fix the critical issues you found\"}'
 ```
 
 ### Reuse a workspace (optional)
@@ -172,7 +209,39 @@ task = client.create_task(
     github_url="my-org/my-repo"
 )
 
-# Just return the URL -- the user watches it live
+# Just return the URL — the user watches it live
+print(f"Watch here: {task['url']}")
+```
+
+### With file upload
+
+```python
+# Upload a file for the agent to work on
+file_info = client.upload_file("report.pdf")
+
+task = client.create_task(
+    prompt="Summarize this PDF and extract key findings",
+    skills=["pdf"],
+    files=[file_info]
+)
+print(f"Watch here: {task['url']}")
+```
+
+### With multiple files
+
+```python
+# Upload multiple files
+files = [
+    client.upload_file("q4-revenue.csv"),
+    client.upload_file("q4-expenses.csv"),
+    client.upload_file("notes.pdf"),
+]
+
+task = client.create_task(
+    prompt="Analyze the Q4 financial data and summarize findings from the notes",
+    skills=["data-analysis", "pdf"],
+    files=files
+)
 print(f"Watch here: {task['url']}")
 ```
 
@@ -189,6 +258,24 @@ vis = client.set_visibility(task["id"], "public")
 print(f"Share this link: {vis['shareUrl']}")
 ```
 
+### Full lifecycle: upload, create, share
+
+```python
+# 1. Upload files
+file_info = client.upload_file("data.csv")
+
+# 2. Create task with files and skills
+task = client.create_task(
+    prompt="Analyze this dataset and create a visualization",
+    skills=["data-analysis"],
+    files=[file_info]
+)
+
+# 3. Share with anyone
+vis = client.set_visibility(task["id"], "public")
+print(f"Share this link: {vis['shareUrl']}")
+```
+
 ### With polling (when you need to chain work)
 
 ```python
@@ -201,6 +288,16 @@ client.follow_up(task["id"], prompt="Add authentication with JWT")
 result = client.wait_for_task(task["id"])
 print(f"Done: {result['url']}")
 ```
+
+## File Upload
+
+To give the agent files to work on:
+
+1. **`POST /v1/files`** with `{"filename": "data.csv"}` — returns `{id, filename, uploadUrl}`
+2. **`PUT {uploadUrl}`** with the file content
+3. **Pass to task** as `files: [{"id": "...", "filename": "..."}]`
+
+The file is automatically copied into the task's VM. Upload URLs expire in 1 hour.
 
 ## Task Status
 
@@ -226,6 +323,7 @@ print(f"Done: {result['url']}")
 | prompt | string | Yes | Task description (max 100,000 chars) |
 | executor | string | No | `opencode` (default), `claude`, `gemini`, `codex` |
 | model | string | No | Model tier (default: `lite`) |
+| files | object[] | No | Files from `POST /v1/files`. Each: `{"id": "...", "filename": "..."}` |
 | skills | string[] | No | Skill slugs (e.g., `["pdf", "deep-research"]`) |
 | githubUrl | string | No | GitHub repo (e.g., `owner/repo`) |
 | branchName | string | No | Branch name (default: `main`) |

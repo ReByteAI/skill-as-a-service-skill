@@ -38,10 +38,10 @@ client = get_client()
 # List available skills
 skills = client.list_skills(search="pdf")
 
-# Spawn an agent
-agent = client.spawn_agent(
+# Spawn an agent (using skill ID or description)
+agent = client.smart_spawn_agent(
     agent_name="my-worker",
-    skills=["anthropics-pdf"],
+    skill_queries=["pdf processing"],  # Auto-resolves to 'anthropics-pdf'
     prompt="You are a PDF expert."
 )
 
@@ -61,8 +61,8 @@ client.terminate_agent(agent["agent_id"])
 # List skills
 python3 scripts/skill_cli.py list-skills --search pdf
 
-# Spawn an agent
-python3 scripts/skill_cli.py spawn-agent --name worker --skills anthropics-pdf
+# Spawn an agent (just describe the skill you need)
+python3 scripts/skill_cli.py spawn-agent --name worker --skills "pdf processing"
 
 # Run a task
 python3 scripts/skill_cli.py run-task --agent-id AGENT_ID --task "Extract text" --input '{"file": "sample.pdf"}'

@@ -134,6 +134,30 @@ class SkillServiceClient:
         """Get detailed information about a specific skill."""
         return self._request("GET", f"/v1/skills/{skill_id}")
 
+    def resolve_skill_id(self, query: str) -> str:
+        """
+        Resolve a skill ID from a search query or potential ID.
+        If the query matches a known skill ID format (e.g. 'vendor-skill'), verify it.
+        Otherwise, search for the best match.
+        """
+        # If it looks like a full ID, try to get details first
+        if "-" in query and not " " in query:
+            try:
+                self.get_skill_details(query)
+                return query
+            except APIError:
+                pass  # Not a valid ID, fall back to search
+
+        # Search for the skill
+        results = self.list_skills(search=query, limit=1)
+        skills = results.get("skills", [])
+        
+        if not skills:
+            raise ValueError(f"No skill found matching query: '{query}'")
+        
+        best_match = skills[0]
+        return best_match["id"]
+
     # ============ AGENTS ============
 
     def spawn_agent(
@@ -152,6 +176,38 @@ class SkillServiceClient:
         if prompt:
             data["prompt"] = prompt
         return self._request("POST", "/v1/agents", data=data)
+    
+    def smart_spawn_agent(
+        self,
+        agent_name: str,
+        skill_queries: List[str],
+        prompt: Optional[str] = None,
+        max_iterations: int = 100
+    ) -> Dict[str, Any]:
+        """
+        Spawn an agent by resolving skill descriptions to actual skill IDs.
+        
+        Args:
+            agent_name: Name of the agent
+            skill_queries: List of skill IDs OR descriptions (e.g. ["excel", "pdf"])
+            prompt: Initial prompt
+            max_iterations: Max steps
+        """
+        resolved_skills = []
+        for query in skill_queries:
+            try:
+                skill_id = self.resolve_skill_id(query)
+                resolved_skills.append(skill_id)
+            except ValueError as e:
+                # Log warning or fail? For "smart" spawn, maybe fail fast.
+                raise ValueError(f"Could not resolve skill for '{query}': {str(e)}")
+
+        return self.spawn_agent(
+            agent_name=agent_name,
+            skills=resolved_skills,
+            prompt=prompt,
+            max_iterations=max_iterations
+        )
 
     def list_agents(
         self,
@@ -253,6 +309,22 @@ def spawn_agent(
     return client.spawn_agent(
         agent_name=agent_name,
         skills=skills,
+        prompt=prompt,
+        max_iterations=max_iterations
+    )
+
+
+def smart_spawn_agent(
+    agent_name: str,
+    skill_queries: List[str],
+    prompt: str = None,
+    max_iterations: int = 100
+) -> Dict[str, Any]:
+    """Spawn an agent by resolving skill descriptions to actual skill IDs."""
+    client = get_client()
+    return client.smart_spawn_agent(
+        agent_name=agent_name,
+        skill_queries=skill_queries,
         prompt=prompt,
         max_iterations=max_iterations
     )

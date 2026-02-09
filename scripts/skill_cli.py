@@ -28,7 +28,7 @@ def main():
     # Spawn Agent
     spawn_parser = subparsers.add_parser("spawn-agent", help="Spawn a cloud agent")
     spawn_parser.add_argument("--name", required=True, help="Agent name")
-    spawn_parser.add_argument("--skills", required=True, nargs="+", help="List of skills")
+    spawn_parser.add_argument("--skills", required=True, nargs="+", help="List of skill IDs OR descriptions (e.g. 'excel')")
     spawn_parser.add_argument("--prompt", help="Initial prompt for the agent")
 
     # Run Task
@@ -59,7 +59,7 @@ def main():
             print(json.dumps(result, indent=2))
         
         elif args.command == "spawn-agent":
-            result = client.spawn_agent(agent_name=args.name, skills=args.skills, prompt=args.prompt)
+            result = client.smart_spawn_agent(agent_name=args.name, skill_queries=args.skills, prompt=args.prompt)
             print(f"Agent spawned successfully. Agent ID: {result.get('agent_id')}")
             print(json.dumps(result, indent=2))
             

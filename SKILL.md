@@ -20,7 +20,7 @@ Spawn cloud code agents with specialized skills and execute tasks remotely. Spec
 
 ### Step 1: Verify API Key
 Before performing any action, check if the `SKILL_SERVICE_API_KEY` environment variable is available.
-- **If missing**: Pause and ask the user: *"I need a Rebyte API key to proceed. You can get one at [rebyte.ai/settings/api-keys](https://rebyte.ai/settings/api-keys). Please provide your key or set the `SKILL_SERVICE_API_KEY` environment variable."*
+- **If missing**: Pause and ask the user: *"I need a Rebyte API key to proceed. You can get one at [app.rebyte.ai/settings/api-keys](https://app.rebyte.ai/settings/api-keys). Please provide your key or set the `SKILL_SERVICE_API_KEY` environment variable."*
 - **If present**: Continue with the user's request.
 
 ## Quick Start

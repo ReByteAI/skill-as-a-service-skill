@@ -28,7 +28,7 @@ Instead of trying to be a "jack of all trades," your main agent can simply:
 ### Prerequisites
 
 You need a Rebyte API key to orchestrate cloud agents.
-[**Get your API Key**](https://rebyte.ai/settings/api-keys)
+[**Get your API Key**](https://app.rebyte.ai/settings/api-keys)
 
 ```bash
 export SKILL_SERVICE_API_KEY="your_api_key_here"

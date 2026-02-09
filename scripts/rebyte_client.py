@@ -65,6 +65,37 @@ class RebyteClient:
 
     # ── public API ───────────────────────────────────────────
 
+    def upload_file(
+        self,
+        file_path: str,
+        *,
+        content_type: str = "application/octet-stream",
+    ) -> Dict[str, str]:
+        """Upload a file for use in tasks.
+
+        Returns {"id": "...", "filename": "..."} ready to pass to create_task(files=...).
+        """
+        filename = os.path.basename(file_path)
+
+        # 1. Get signed upload URL
+        resp = self._request(
+            "POST",
+            "/files",
+            body={"filename": filename, "contentType": content_type},
+        )
+
+        # 2. Upload file content to signed URL
+        with open(file_path, "rb") as f:
+            file_data = f.read()
+
+        upload_req = urllib.request.Request(
+            resp["uploadUrl"], data=file_data, method="PUT"
+        )
+        upload_req.add_header("Content-Type", content_type)
+        urllib.request.urlopen(upload_req)
+
+        return {"id": resp["id"], "filename": resp["filename"]}
+
     def create_task(
         self,
         prompt: str,
@@ -72,11 +103,15 @@ class RebyteClient:
         executor: Optional[str] = None,
         model: Optional[str] = None,
         skills: Optional[List[str]] = None,
+        files: Optional[List[Dict[str, str]]] = None,
         github_url: Optional[str] = None,
         branch_name: Optional[str] = None,
         workspace_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Create a task. Blocks until running."""
+        """Create a task. Blocks until running.
+
+        files: list of {"id": "...", "filename": "..."} from upload_file().
+        """
         body: Dict[str, Any] = {"prompt": prompt}
         if executor:
             body["executor"] = executor
@@ -84,6 +119,8 @@ class RebyteClient:
             body["model"] = model
         if skills:
             body["skills"] = skills
+        if files:
+            body["files"] = files
         if github_url:
             body["githubUrl"] = github_url
         if branch_name:

@@ -1,130 +1,168 @@
 # API Reference
 
-## Config
+## Authentication
 
-Configuration dataclass for the API client.
+All requests require the `API_KEY` header:
 
-```python
-@dataclass
-class Config:
-    api_key: str           # API authentication key
-    base_url: str = "https://api.rebyte.ai"  # API base URL
+```
+API_KEY: rbk_your_api_key
 ```
 
-### from_env()
+Get your key at [app.rebyte.ai/settings/api-keys](https://app.rebyte.ai/settings/api-keys).
 
-Load configuration from environment variables.
+## Endpoints
 
-```python
-config = Config.from_env()
-# Reads SKILL_SERVICE_API_KEY and optionally SKILL_SERVICE_BASE_URL
-```
+### POST /v1/tasks
 
-## APIError
+Create a new task. Blocks until the VM is provisioned and the first prompt is sent.
 
-Exception raised for API errors.
-
-```python
-class APIError(Exception):
-    message: str                    # Error message
-    status_code: Optional[int]      # HTTP status code
-    response: Optional[Dict]        # Full response data
-```
-
-## SkillServiceClient
-
-Main client class for interacting with the Skill as a Service API.
-
-### Constructor
-
-```python
-client = SkillServiceClient(
-    api_key: str = None,        # Optional API key (uses env if not provided)
-    base_url: str = None        # Optional base URL
-)
-```
-
-### Methods
-
-#### Skills
-
-| Method | HTTP | Endpoint | Description |
-|--------|------|----------|-------------|
-| `list_skills()` | GET | /v1/skills | List available skills |
-| `get_skill_details()` | GET | /v1/skills/{skill_id} | Get skill details |
-
-#### Agents
-
-| Method | HTTP | Endpoint | Description |
-|--------|------|----------|-------------|
-| `spawn_agent()` | POST | /v1/agents | Create new agent |
-| `list_agents()` | GET | /v1/agents | List all agents |
-| `get_agent_info()` | GET | /v1/agents/{agent_id} | Get agent details |
-| `terminate_agent()` | DELETE | /v1/agents/{agent_id} | Stop agent |
-
-#### Tasks
-
-| Method | HTTP | Endpoint | Description |
-|--------|------|----------|-------------|
-| `run_task()` | POST | /v1/agents/{agent_id}/tasks | Execute task |
-| `get_task_status()` | GET | /v1/tasks/{task_id} | Check status |
-| `wait_for_task()` | GET | /v1/tasks/{task_id} | Poll until done |
-| `cancel_task()` | POST | /v1/tasks/{task_id}/cancel | Cancel task |
-
-## Response Formats
-
-### List Skills Response
-
+**Request:**
 ```json
 {
-  "skills": [
+  "prompt": "Build a REST API with Express",
+  "executor": "opencode",
+  "model": "lite",
+  "skills": ["deep-research", "pdf"],
+  "githubUrl": "owner/repo",
+  "branchName": "main"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| prompt | string | Yes | Task description (max 100,000 chars) |
+| executor | string | No | `opencode` (default), `claude`, `gemini`, `codex` |
+| model | string | No | Model tier (default: `lite`) |
+| skills | string[] | No | Skill slugs |
+| githubUrl | string | No | GitHub repo (`owner/repo`) |
+| branchName | string | No | Branch (default: `main`) |
+| workspaceId | string | No | Reuse existing workspace UUID |
+
+**Response (201):**
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "url": "https://app.rebyte.ai/run/550e8400-e29b-41d4-a716-446655440000",
+  "status": "running",
+  "createdAt": "2026-02-09T10:30:00.000Z"
+}
+```
+
+---
+
+### GET /v1/tasks
+
+List API-created tasks, newest first.
+
+**Query Parameters:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| limit | number | 50 | Results per page (max 100) |
+| offset | number | 0 | Offset for pagination |
+
+**Response:**
+```json
+{
+  "data": [
     {
-      "id": "anthropics-pdf",
-      "name": "anthropics-pdf",
-      "description": "Process PDF files...",
-      "category": "document"
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "url": "https://app.rebyte.ai/run/550e8400-...",
+      "title": "Build REST API with Express",
+      "executor": "opencode",
+      "model": "lite",
+      "createdAt": "2026-02-09T10:30:00.000Z",
+      "completedAt": "2026-02-09T10:32:00.000Z"
     }
   ],
-  "total": 50,
-  "limit": 20
+  "total": 42,
+  "limit": 50,
+  "offset": 0
 }
 ```
 
-### Spawn Agent Response
+---
 
+### GET /v1/tasks/:id
+
+Get a task with derived status and prompts array.
+
+**Response:**
 ```json
 {
-  "agent_id": "agent_abc123",
-  "name": "my-agent",
-  "status": "running",
-  "skills": ["anthropics-pdf", "anthropics-docx"],
-  "created_at": "2025-01-15T10:30:00Z"
-}
-```
-
-### Task Status Response
-
-```json
-{
-  "task_id": "task_xyz789",
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "url": "https://app.rebyte.ai/run/550e8400-...",
   "status": "completed",
-  "result": {"output": "..."},
-  "started_at": "2025-01-15T10:30:00Z",
-  "completed_at": "2025-01-15T10:30:45Z"
+  "title": "Build REST API with Express",
+  "executor": "opencode",
+  "model": "lite",
+  "createdAt": "2026-02-09T10:30:00.000Z",
+  "completedAt": "2026-02-09T10:32:00.000Z",
+  "prompts": [
+    {
+      "id": "uuid-1",
+      "status": "succeeded",
+      "submittedAt": "2026-02-09T10:30:01.000Z",
+      "completedAt": "2026-02-09T10:32:00.000Z"
+    }
+  ]
 }
 ```
 
-## Status Values
+---
 
-### Agent Status
-- `pending` - Agent is being created
-- `running` - Agent is active and ready
-- `stopped` - Agent has been stopped
-- `error` - Agent encountered an error
+### POST /v1/tasks/:id/prompts
 
-### Task Status
-- `pending` - Task is queued
-- `running` - Task is executing
-- `completed` - Task finished successfully
-- `failed` - Task encountered an error
-- `cancelled` - Task was cancelled
+Send a follow-up prompt to an existing task. The VM is resumed if stopped.
+
+**Request:**
+```json
+{
+  "prompt": "Now add authentication",
+  "skills": ["pdf"]
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| prompt | string | Yes | Follow-up prompt (max 100,000 chars) |
+| skills | string[] | No | Skill slugs for this prompt |
+
+**Response (201):**
+```json
+{
+  "promptId": "660e8400-e29b-41d4-a716-446655440001"
+}
+```
+
+---
+
+### DELETE /v1/tasks/:id
+
+Soft-delete a task.
+
+**Response:** `204 No Content`
+
+---
+
+## Task Status Values
+
+| Status | Condition |
+|--------|-----------|
+| `running` | Any prompt is `pending` or `running` |
+| `completed` | All prompts terminal, latest is `succeeded` |
+| `failed` | All prompts terminal, latest is `failed` |
+| `canceled` | All prompts terminal, latest is `canceled` |
+
+## Error Format
+
+```json
+{
+  "error": {
+    "code": "validation_error",
+    "message": "Invalid request body"
+  }
+}
+```
+
+Error codes: `validation_error`, `not_found`, `unauthorized`, `limit_exceeded`, `internal_error`

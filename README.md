@@ -1,6 +1,6 @@
-# Skill as a Service Skill 🧠☁️
+# Skill as a Service
 
-Spawn cloud code agents with specialized skills and execute tasks remotely. This "meta-skill" allows you to dynamically provision specialized "worker" agents in the cloud, each equipped with specific skills.
+Run any Rebyte skill as a cloud API. Create tasks, attach skills, poll for results, and send follow-ups -- all from code.
 
 ## How to use
 

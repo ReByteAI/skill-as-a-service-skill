@@ -1,189 +1,152 @@
 # Examples
 
-## Basic Usage
-
-### Listing Skills
+## Basic: Create and Poll
 
 ```python
-from scripts.skill_service import list_skills
+from scripts.rebyte_client import RebyteClient
 
-# Get all skills
-all_skills = list_skills(limit=50)
+client = RebyteClient()
 
-# Search for specific skills
-python_skills = list_skills(search="python")
+# Create a task
+task = client.create_task(prompt="Say hello world")
+print(f"Task running: {task['url']}")
 
-# Filter by category
-category_skills = list_skills(category="document")
+# Wait for completion
+result = client.wait_for_task(task["id"])
+print(f"Done! Status: {result['status']}")
+print(f"View results: {result['url']}")
 ```
 
-### Spawning an Agent
+## Create with Skills
 
 ```python
-from scripts.skill_service import spawn_agent
-
-agent = spawn_agent(
-    agent_name="pdf-processor",
-    skills=["anthropics-pdf", "anthropics-docx"],
-    prompt="You are a document processing assistant. Help users with PDF operations.",
-    max_iterations=100
+task = client.create_task(
+    prompt="Research the latest trends in AI agents",
+    skills=["deep-research"]
 )
-
-print(f"Agent ID: {agent['agent_id']}")
+result = client.wait_for_task(task["id"])
 ```
 
-### Running a Task
+## Create with GitHub Repo
 
 ```python
-from scripts.skill_service import run_task
-
-result = run_task(
-    agent_id="agent_abc123",
-    task_description="Extract text from the PDF file",
-    input_data={
-        "file_path": "/path/to/document.pdf",
-        "operation": "extract_text"
-    },
-    wait_for_completion=True,
-    timeout_seconds=300
+task = client.create_task(
+    prompt="Add unit tests for the auth module",
+    skills=["pdf"],
+    github_url="my-org/my-repo",
+    branch_name="main"
 )
-
-print(f"Status: {result['status']}")
-print(f"Result: {result['result']}")
+result = client.wait_for_task(task["id"])
 ```
 
-## Agent Management
-
-### List All Agents
+## Follow-Up Prompts
 
 ```python
-from scripts.skill_service import get_client
+# Create initial task
+task = client.create_task(prompt="Build a REST API with Express")
+result = client.wait_for_task(task["id"])
 
-client = get_client()
-agents = client.list_agents(status="running", limit=20)
+# Send follow-up
+client.follow_up(task["id"], prompt="Now add authentication with JWT")
+result = client.wait_for_task(task["id"])
 
-for agent in agents.get("agents", []):
-    print(f"{agent['agent_id']}: {agent['status']}")
+# Another follow-up
+client.follow_up(task["id"], prompt="Add rate limiting")
+result = client.wait_for_task(task["id"])
+
+print(f"View all results: {result['url']}")
 ```
 
-### Check Agent Info
+## List and Manage Tasks
 
 ```python
-info = client.get_agent_info("agent_abc123")
-print(f"Status: {info['status']}")
-print(f"Skills: {info['skills']}")
-print(f"Created: {info['created_at']}")
+# List recent tasks
+tasks = client.list_tasks(limit=10)
+for t in tasks["data"]:
+    print(f"{t['id']}: {t['title']}")
+
+# Delete a task
+client.delete_task(task["id"])
 ```
 
-### Terminate Agent
+## Batch Processing
 
 ```python
-result = client.terminate_agent("agent_abc123")
-print(f"Terminated: {result.get('success', False)}")
+import concurrent.futures
+
+client = RebyteClient()
+
+prompts = [
+    "Analyze auth module for security issues",
+    "Generate API documentation",
+    "Write integration tests for payments",
+]
+
+def run_task(prompt):
+    task = client.create_task(
+        prompt=prompt,
+        github_url="my-org/my-repo"
+    )
+    return client.wait_for_task(task["id"])
+
+# Run all tasks concurrently
+with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+    results = list(executor.map(run_task, prompts))
+
+for r in results:
+    print(f"{r['title']}: {r['status']} - {r['url']}")
 ```
 
 ## Custom Polling
 
-If you need custom polling logic:
-
 ```python
-from scripts.skill_service import get_client
-
-client = get_client()
-
-# Start task without waiting
-task = client.run_task(
-    agent_id="agent_abc123",
-    task_description="Process large file",
-    wait_for_completion=False
-)
-
-task_id = task["task_id"]
-
-# Custom polling
 import time
+
+client = RebyteClient()
+task = client.create_task(prompt="Long running analysis")
+
 while True:
-    status = client.get_task_status(task_id)
-    print(f"Status: {status['status']}")
+    status = client.get_task(task["id"])
+    print(f"Status: {status['status']}, Prompts: {len(status['prompts'])}")
 
-    if status["status"] in ("completed", "failed", "cancelled"):
+    if status["status"] in ("completed", "failed", "canceled"):
         break
-
     time.sleep(5)
+
+print(f"Final: {status['url']}")
 ```
 
 ## Error Handling
 
 ```python
-from scripts.skill_service import SkillServiceClient, APIError
+from scripts.rebyte_client import RebyteClient, APIError
 
-client = SkillServiceClient()
+client = RebyteClient()
 
 try:
-    agent = client.spawn_agent(
-        agent_name="test-agent",
-        skills=["invalid-skill"],
-        prompt="Test"
-    )
+    task = client.create_task(prompt="Do something")
+    result = client.wait_for_task(task["id"], timeout_seconds=120)
 except APIError as e:
-    print(f"API Error: {e.message}")
-    print(f"Status Code: {e.status_code}")
-    print(f"Response: {e.response}")
-```
-
-## Complete Workflow
-
-```python
-from scripts.skill_service import get_client
-
-client = get_client()
-
-# 1. List available skills
-skills = client.list_skills(search="pdf", limit=5)
-print("Available PDF skills:", skills["skills"])
-
-# 2. Spawn an agent
-agent = client.spawn_agent(
-    agent_name="my-pdf-agent",
-    skills=["anthropics-pdf"],
-    prompt="You are a PDF expert."
-)
-print(f"Agent created: {agent['agent_id']}")
-
-# 3. Run a task
-result = client.run_task(
-    agent_id=agent["agent_id"],
-    task_description="Merge these two PDF files",
-    input_data={
-        "files": ["/path/a.pdf", "/path/b.pdf"],
-        "operation": "merge"
-    }
-)
-print(f"Task completed: {result['status']}")
-print(f"Output: {result['result']}")
-
-# 4. Clean up
-client.terminate_agent(agent["agent_id"])
-print("Agent terminated")
+    print(f"API Error: {e.message} (HTTP {e.status_code})")
+except TimeoutError as e:
+    print(f"Task timed out: {e}")
 ```
 
 ## CLI Examples
 
-### Basic Flow
-
 ```bash
-# 1. List skills
-python3 scripts/skill_cli.py list-skills --search docx
+# Create a task
+python3 scripts/rebyte_cli.py create --prompt "Analyze this repo" --skills deep-research
 
-# 2. Spawn agent
-python3 scripts/skill_cli.py spawn-agent --name doc-worker --skills anthropics-docx
+# Get task details
+python3 scripts/rebyte_cli.py get TASK_ID
 
-# 3. Run task
-python3 scripts/skill_cli.py run-task --agent-id agent_abc123 --task "Analyze document" --input '{"path": "report.docx"}'
+# Send follow-up
+python3 scripts/rebyte_cli.py follow-up TASK_ID --prompt "Fix the issues"
 
-# 4. List agents
-python3 scripts/skill_cli.py list-agents --status running
+# List all tasks
+python3 scripts/rebyte_cli.py list --limit 20
 
-# 5. Terminate agent
-python3 scripts/skill_cli.py terminate-agent --agent-id agent_abc123
+# Delete a task
+python3 scripts/rebyte_cli.py delete TASK_ID
 ```

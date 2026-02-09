@@ -1,256 +1,267 @@
 # Examples
 
-## Full Lifecycle: Create, Run, Share
+All examples use `curl` and assume `REBYTE_API_KEY` is set.
 
-The complete task lifecycle in one example:
+## Simplest: Create and Return URL
 
-```python
-from scripts.rebyte_client import RebyteClient
+```bash
+TASK=$(curl -s -X POST https://api.rebyte.ai/v1/tasks \
+  -H "API_KEY: $REBYTE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Analyze this codebase for security issues", "skills": ["deep-research"]}')
 
-client = RebyteClient()
-
-# 1. CREATE — spawn a task with skills
-task = client.create_task(
-    prompt="Analyze this repo for security vulnerabilities",
-    skills=["deep-research"],
-    github_url="my-org/my-repo"
-)
-print(f"Task started: {task['url']}")
-
-# 2. RUN — wait for completion
-result = client.wait_for_task(task["id"])
-print(f"Status: {result['status']}")
-
-# 3. SHARE — make it public and get the share URL
-visibility = client.set_visibility(task["id"], "public")
-print(f"Share this link: {visibility['shareUrl']}")
-# Anyone with that link can view the results — no login required
+echo "Watch here: $(echo $TASK | jq -r '.url')"
 ```
 
-## Basic: Create and Poll
+## Upload File and Create Task
 
-```python
-from scripts.rebyte_client import RebyteClient
+```bash
+# 1. Get signed upload URL
+FILE_RESP=$(curl -s -X POST https://api.rebyte.ai/v1/files \
+  -H "API_KEY: $REBYTE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"filename": "report.pdf"}')
 
-client = RebyteClient()
+UPLOAD_URL=$(echo "$FILE_RESP" | jq -r '.uploadUrl')
+FILE_ID=$(echo "$FILE_RESP" | jq -r '.id')
+FILE_NAME=$(echo "$FILE_RESP" | jq -r '.filename')
 
-# Create a task
-task = client.create_task(prompt="Say hello world")
-print(f"Task running: {task['url']}")
+# 2. Upload file content
+curl -s -X PUT "$UPLOAD_URL" \
+  -H "Content-Type: application/octet-stream" \
+  --data-binary @report.pdf
 
-# Wait for completion
-result = client.wait_for_task(task["id"])
-print(f"Done! Status: {result['status']}")
-print(f"View results: {result['url']}")
+# 3. Create task with the file
+TASK=$(curl -s -X POST https://api.rebyte.ai/v1/tasks \
+  -H "API_KEY: $REBYTE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"prompt\": \"Summarize this PDF and extract key findings\",
+    \"skills\": [\"pdf\"],
+    \"files\": [{\"id\": \"$FILE_ID\", \"filename\": \"$FILE_NAME\"}]
+  }")
+
+echo "Watch here: $(echo $TASK | jq -r '.url')"
 ```
 
-## Create with Skills
+## Upload Multiple Files
 
-```python
-task = client.create_task(
-    prompt="Research the latest trends in AI agents",
-    skills=["deep-research"]
-)
-result = client.wait_for_task(task["id"])
+```bash
+# Upload each file
+for FILE_PATH in data.csv notes.pdf config.json; do
+  RESP=$(curl -s -X POST https://api.rebyte.ai/v1/files \
+    -H "API_KEY: $REBYTE_API_KEY" \
+    -H "Content-Type: application/json" \
+    -d "{\"filename\": \"$FILE_PATH\"}")
+
+  curl -s -X PUT "$(echo $RESP | jq -r '.uploadUrl')" \
+    -H "Content-Type: application/octet-stream" \
+    --data-binary @"$FILE_PATH"
+
+  echo "Uploaded: $(echo $RESP | jq -r '.filename')"
+  # Save file info for task creation
+  FILES="$FILES{\"id\": $(echo $RESP | jq '.id'), \"filename\": $(echo $RESP | jq '.filename')},"
+done
+
+# Remove trailing comma and create task
+FILES="[${FILES%,}]"
+curl -s -X POST https://api.rebyte.ai/v1/tasks \
+  -H "API_KEY: $REBYTE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"prompt\": \"Analyze all these files and create a summary report\",
+    \"skills\": [\"data-analysis\", \"pdf\"],
+    \"files\": $FILES
+  }"
 ```
 
-## Create with GitHub Repo
+## Create Task with GitHub Repo
 
-```python
-task = client.create_task(
-    prompt="Add unit tests for the auth module",
-    skills=["pdf"],
-    github_url="my-org/my-repo",
-    branch_name="main"
-)
-result = client.wait_for_task(task["id"])
+```bash
+TASK=$(curl -s -X POST https://api.rebyte.ai/v1/tasks \
+  -H "API_KEY: $REBYTE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "Add unit tests for the auth module",
+    "githubUrl": "my-org/my-repo",
+    "branchName": "main"
+  }')
+
+echo "Task: $(echo $TASK | jq -r '.url')"
 ```
 
-## Reuse a Workspace
+## Create and Share Publicly
 
-Pass `workspaceId` from a previous task to run in the same VM. Skips provisioning and is much faster.
+```bash
+# Create the task
+TASK=$(curl -s -X POST https://api.rebyte.ai/v1/tasks \
+  -H "API_KEY: $REBYTE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Generate a Q4 sales report", "skills": ["data-analysis"]}')
+TASK_ID=$(echo $TASK | jq -r '.id')
 
-```python
-# First task provisions a new VM
-task1 = client.create_task(
-    prompt="Set up the project structure",
-    github_url="my-org/my-repo"
-)
-result1 = client.wait_for_task(task1["id"])
+# Make it public
+SHARE=$(curl -s -X PATCH "https://api.rebyte.ai/v1/tasks/$TASK_ID/visibility" \
+  -H "API_KEY: $REBYTE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"visibility": "public"}')
 
-# Second task reuses the same VM — no provisioning delay
-task2 = client.create_task(
-    prompt="Now add authentication",
-    workspace_id=task1["workspaceId"]
-)
-result2 = client.wait_for_task(task2["id"])
+echo "Share this link: $(echo $SHARE | jq -r '.shareUrl')"
+```
 
-# Third task, same workspace
-task3 = client.create_task(
-    prompt="Add rate limiting",
-    workspace_id=task1["workspaceId"]
-)
-result3 = client.wait_for_task(task3["id"])
+## Poll Until Complete
+
+```bash
+TASK_ID="your-task-id"
+while true; do
+  STATUS=$(curl -s "https://api.rebyte.ai/v1/tasks/$TASK_ID" \
+    -H "API_KEY: $REBYTE_API_KEY" | jq -r '.status')
+  echo "Status: $STATUS"
+  [[ "$STATUS" == "completed" || "$STATUS" == "failed" || "$STATUS" == "canceled" ]] && break
+  sleep 5
+done
 ```
 
 ## Follow-Up Prompts
 
-```python
+```bash
 # Create initial task
-task = client.create_task(prompt="Build a REST API with Express")
-result = client.wait_for_task(task["id"])
+TASK=$(curl -s -X POST https://api.rebyte.ai/v1/tasks \
+  -H "API_KEY: $REBYTE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Build a REST API with Express"}')
+TASK_ID=$(echo $TASK | jq -r '.id')
 
-# Send follow-up
-client.follow_up(task["id"], prompt="Now add authentication with JWT")
-result = client.wait_for_task(task["id"])
+# Wait for completion, then follow up
+# ... (poll or just wait) ...
+
+curl -s -X POST "https://api.rebyte.ai/v1/tasks/$TASK_ID/prompts" \
+  -H "API_KEY: $REBYTE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Now add authentication with JWT"}'
 
 # Another follow-up
-client.follow_up(task["id"], prompt="Add rate limiting")
-result = client.wait_for_task(task["id"])
-
-print(f"View all results: {result['url']}")
+curl -s -X POST "https://api.rebyte.ai/v1/tasks/$TASK_ID/prompts" \
+  -H "API_KEY: $REBYTE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Add rate limiting"}'
 ```
 
-## Share Results with End Users
-
-If your API creates tasks on behalf of end users who don't have accounts:
-
-```python
-# Run the task
-task = client.create_task(
-    prompt="Generate a report on Q4 sales data",
-    skills=["data-analysis"]
-)
-result = client.wait_for_task(task["id"])
-
-# Make it public so the end user can view it
-vis = client.set_visibility(task["id"], "public")
-
-# Send this URL to the end user (email, Slack, etc.)
-share_url = vis["shareUrl"]
-print(f"Report ready: {share_url}")
-
-# Later, revoke public access if needed
-client.set_visibility(task["id"], "private")
-```
-
-## List and Manage Tasks
-
-```python
-# List recent tasks
-tasks = client.list_tasks(limit=10)
-for t in tasks["data"]:
-    print(f"{t['id']}: {t['title']}")
-
-# Delete a task
-client.delete_task(task["id"])
-```
-
-## Batch Processing
-
-```python
-import concurrent.futures
-
-client = RebyteClient()
-
-prompts = [
-    "Analyze auth module for security issues",
-    "Generate API documentation",
-    "Write integration tests for payments",
-]
-
-def run_task(prompt):
-    task = client.create_task(
-        prompt=prompt,
-        github_url="my-org/my-repo"
-    )
-    return client.wait_for_task(task["id"])
-
-# Run all tasks concurrently
-with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-    results = list(executor.map(run_task, prompts))
-
-for r in results:
-    print(f"{r['title']}: {r['status']} - {r['url']}")
-```
-
-## Batch Processing with Shared Results
-
-Run tasks in parallel and share all results:
-
-```python
-import concurrent.futures
-
-client = RebyteClient()
-
-def run_and_share(prompt):
-    task = client.create_task(prompt=prompt, github_url="my-org/my-repo")
-    result = client.wait_for_task(task["id"])
-    vis = client.set_visibility(task["id"], "public")
-    return {"title": result["title"], "shareUrl": vis["shareUrl"]}
-
-prompts = [
-    "Security audit of auth module",
-    "Performance analysis of database queries",
-    "Code quality review of API layer",
-]
-
-with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-    results = list(executor.map(run_and_share, prompts))
-
-for r in results:
-    print(f"{r['title']}: {r['shareUrl']}")
-```
-
-## Sequential Tasks in Same Workspace
-
-```python
-client = RebyteClient()
-
-# First task provisions the VM
-task = client.create_task(
-    prompt="Clone and analyze the repo",
-    github_url="my-org/my-repo"
-)
-result = client.wait_for_task(task["id"])
-ws_id = task["workspaceId"]
-
-# Run a sequence of tasks in the same workspace
-for step in ["Fix linting errors", "Add missing tests", "Update README"]:
-    t = client.create_task(prompt=step, workspace_id=ws_id)
-    r = client.wait_for_task(t["id"])
-    print(f"{r['title']}: {r['status']}")
-```
-
-## Error Handling
-
-```python
-from scripts.rebyte_client import RebyteClient, APIError
-
-client = RebyteClient()
-
-try:
-    task = client.create_task(prompt="Do something")
-    result = client.wait_for_task(task["id"], timeout_seconds=120)
-except APIError as e:
-    print(f"API Error: {e.message} (HTTP {e.status_code})")
-except TimeoutError as e:
-    print(f"Task timed out: {e}")
-```
-
-## CLI Examples
+## Reuse Workspace (Faster Subsequent Tasks)
 
 ```bash
-# Full lifecycle
-python3 scripts/rebyte_cli.py create --prompt "Analyze this repo" --skills deep-research
-python3 scripts/rebyte_cli.py get TASK_ID
-python3 scripts/rebyte_cli.py visibility TASK_ID --level public
-# → returns shareUrl
+# First task provisions a new VM
+TASK1=$(curl -s -X POST https://api.rebyte.ai/v1/tasks \
+  -H "API_KEY: $REBYTE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Set up the project", "githubUrl": "owner/repo"}')
+WS_ID=$(echo $TASK1 | jq -r '.workspaceId')
 
-# Follow-up
-python3 scripts/rebyte_cli.py follow-up TASK_ID --prompt "Fix the issues"
+# Second task reuses the same VM — no provisioning delay
+TASK2=$(curl -s -X POST https://api.rebyte.ai/v1/tasks \
+  -H "API_KEY: $REBYTE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"prompt\": \"Now add tests\", \"workspaceId\": \"$WS_ID\"}")
 
-# List and delete
-python3 scripts/rebyte_cli.py list --limit 20
-python3 scripts/rebyte_cli.py delete TASK_ID
+echo "Task 2: $(echo $TASK2 | jq -r '.url')"
+```
+
+## List and Delete Tasks
+
+```bash
+# List recent tasks
+curl -s "https://api.rebyte.ai/v1/tasks?limit=10" \
+  -H "API_KEY: $REBYTE_API_KEY" | jq '.data[] | {id, title, status: .completedAt}'
+
+# Delete a task
+curl -s -X DELETE "https://api.rebyte.ai/v1/tasks/$TASK_ID" \
+  -H "API_KEY: $REBYTE_API_KEY" -w "HTTP %{http_code}\n"
+```
+
+## Batch: Run Multiple Tasks Concurrently
+
+```bash
+# Launch 3 tasks in parallel
+for PROMPT in \
+  "Analyze auth module for security issues" \
+  "Generate API documentation" \
+  "Write integration tests for payments"; do
+
+  curl -s -X POST https://api.rebyte.ai/v1/tasks \
+    -H "API_KEY: $REBYTE_API_KEY" \
+    -H "Content-Type: application/json" \
+    -d "{\"prompt\": \"$PROMPT\", \"githubUrl\": \"my-org/my-repo\"}" &
+done
+wait
+echo "All tasks launched"
+```
+
+---
+
+## Python Examples
+
+The skill includes a Python client at `scripts/rebyte_client.py`. To use it:
+
+```bash
+# Find the skill directory
+SKILL_DIR=$(find ~/.skills -maxdepth 1 -name '*skill-as-a-service*' -type d | head -1)
+```
+
+### Using the Python Client
+
+```python
+import sys, os
+
+# Add skill scripts to Python path
+skill_dir = next(
+    (d for d in os.listdir(os.path.expanduser('~/.skills'))
+     if 'skill-as-a-service' in d),
+    None
+)
+if skill_dir:
+    sys.path.insert(0, os.path.expanduser(f'~/.skills/{skill_dir}/scripts'))
+
+from rebyte_client import RebyteClient
+
+client = RebyteClient()  # reads REBYTE_API_KEY from env
+
+# Create a task
+task = client.create_task(
+    prompt="Analyze this repo",
+    skills=["deep-research"],
+    github_url="my-org/my-repo"
+)
+print(f"Watch here: {task['url']}")
+
+# Upload a file and create task
+file_info = client.upload_file("report.pdf")
+task = client.create_task(
+    prompt="Summarize this PDF",
+    skills=["pdf"],
+    files=[file_info]
+)
+print(f"Watch here: {task['url']}")
+
+# Share publicly
+vis = client.set_visibility(task["id"], "public")
+print(f"Share: {vis['shareUrl']}")
+
+# Wait for completion (optional)
+result = client.wait_for_task(task["id"])
+print(f"Status: {result['status']}")
+
+# Follow up
+client.follow_up(task["id"], prompt="Fix the issues found")
+```
+
+### Using the CLI
+
+```bash
+SKILL_DIR=$(find ~/.skills -maxdepth 1 -name '*skill-as-a-service*' -type d | head -1)
+
+python3 "$SKILL_DIR/scripts/rebyte_cli.py" create --prompt "Hello world"
+python3 "$SKILL_DIR/scripts/rebyte_cli.py" get TASK_ID
+python3 "$SKILL_DIR/scripts/rebyte_cli.py" follow-up TASK_ID --prompt "Add tests"
+python3 "$SKILL_DIR/scripts/rebyte_cli.py" list --limit 10
+python3 "$SKILL_DIR/scripts/rebyte_cli.py" delete TASK_ID
 ```

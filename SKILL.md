@@ -1,341 +1,218 @@
 ---
 name: skill-as-a-service
 description: |
-  Run coding agents (Claude Code, Gemini, Codex) with specific skills in the cloud via API.
-  No local setup, no CLI installation, no config files -- just an API key.
-  Use when:
-  - User wants to run a coding agent with skills attached, without any local setup
-  - User wants to fire off tasks to Claude Code (or other agents) from their own code
-  - User needs to create a task with specific skills (deep research, PDF, data analysis, etc.)
-  - User wants the agent to work on uploaded files (PDFs, CSVs, docs, etc.)
-  - User wants to share task results with end users via a public link
-  - User wants to run multiple tasks concurrently or in the same workspace
-
-  Requires a REBYTE_API_KEY environment variable.
+  Run coding agents (Claude Code, Gemini, Codex) with skills in the cloud via API.
+  Each task gets its own isolated VM. Use when you need to spawn sub-tasks,
+  delegate work to other agents, or run tasks with specific skills.
+  Requires REBYTE_API_KEY environment variable.
 ---
 
-# Coding Agents with Skills, via API
+# Skill-as-a-Service API
 
-Run coding agents like Claude Code, Gemini CLI, or Codex with specific skills -- all from a single API key. No local setup, no CLI installation, no configuration files. Each task gets its own isolated cloud environment with the skills you need.
+Spawn coding agent tasks in the cloud via API. Each task gets its own isolated VM with skills pre-installed.
 
-If you want to run a coding agent on a task and have it use specific skills (deep research, PDF processing, data analysis, etc.), this is for you. As long as you have a `REBYTE_API_KEY`, you can fire off as many tasks as you want without touching any local settings.
+## Before You Start
 
-## Task Lifecycle
-
-```
- 0. UPLOAD FILES (optional)     1. CREATE TASK            2. RETURN URL TO USER
- ┌──────────────┐               ┌──────────────┐         ┌──────────────┐
- │ POST /files  │               │ POST /tasks  │         │              │
- │              │──┐            │              │────────▶│  Give the    │
- │ Get signed   │  │            │ prompt       │         │  task URL    │
- │ upload URL   │  │            │ skills       │         │  to the user │
- └──────┬───────┘  │            │ files        │         │              │
-        │          │            │ executor     │         │  They watch  │
-        ▼          │            │ repo         │         │  it live     │
- ┌──────────────┐  │            └──────────────┘         └──────┬───────┘
- │ PUT {url}    │  │                   ▲                        │
- │              │──┘                   │                        │
- │ Upload file  │   pass {id,filename} ┘                        │
- │ content      │                                               │
- └──────────────┘                                               │
-                                                       ┌────────▼───────┐
-        3. SHARE (optional)                            │  Optional:     │
-        ┌──────────────┐                               │                │
-        │ PATCH        │                               │  • Poll status │
-        │ /tasks/:id/  │◀──────────────────────────────│  • Follow up   │
-        │ visibility   │                               │  • Reuse VM    │
-        │              │                               │  • Share       │
-        │ → public     │                               └────────────────┘
-        │ → shareUrl   │
-        └──────────────┘
-```
-
-**The core flow:**
-1. **Upload files** (if the agent needs to work on your files) — get a signed URL, upload, pass the file IDs to the task
-2. **Create a task** with a prompt, skills, files, and optionally a GitHub repo
-3. **Return the URL** to the user — they can watch the task execute live in the browser
-
-You don't need to poll for completion. You don't even need to know when it finishes. The URL is live from the moment the task starts — the user sees the agent working in real time.
-
-Optionally, **share** the result by setting visibility to `public` for a link anyone can view without logging in.
-
-## Agent Instructions: Setup & Authentication
-
-### Step 1: Verify API Key
-Before performing any action, check if the `REBYTE_API_KEY` environment variable is available.
-- **If missing**: Pause and ask the user: *"I need an API key to proceed. You can get one at [app.rebyte.ai/settings/api-keys](https://app.rebyte.ai/settings/api-keys). Please provide your key or set the `REBYTE_API_KEY` environment variable."*
-- **If present**: Continue with the user's request.
-
-## API Overview
-
-**Base URL:** `https://api.rebyte.ai/v1`
-
-**Authentication:** `API_KEY` header with your API key.
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | /v1/files | Upload a file (get signed URL) |
-| POST | /v1/tasks | Create a task (blocks until running) |
-| GET | /v1/tasks | List API-created tasks |
-| GET | /v1/tasks/:id | Get task with derived status and prompts |
-| POST | /v1/tasks/:id/prompts | Send a follow-up prompt |
-| PATCH | /v1/tasks/:id/visibility | Change task visibility (get share URL) |
-| DELETE | /v1/tasks/:id | Soft-delete a task |
-
-## Quick Start
-
-### Create a task and return the URL
+Check that `REBYTE_API_KEY` is set:
 
 ```bash
-curl -X POST https://api.rebyte.ai/v1/tasks \
+echo "$REBYTE_API_KEY"
+```
+
+If empty, ask the user for their API key (get one at https://app.rebyte.ai/settings/api-keys), then:
+
+```bash
+export REBYTE_API_KEY="rbk_..."
+```
+
+## Create a Task
+
+```bash
+curl -s -X POST https://api.rebyte.ai/v1/tasks \
   -H "API_KEY: $REBYTE_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "prompt": "Analyze this codebase for security issues",
+    "prompt": "Your task description here",
     "skills": ["deep-research"]
   }'
-```
-
-Response (201):
-```json
-{
-  "id": "550e8400-e29b-41d4-a716-446655440000",
-  "workspaceId": "660e8400-e29b-41d4-a716-446655440001",
-  "url": "https://app.rebyte.ai/run/550e8400-e29b-41d4-a716-446655440000",
-  "status": "running",
-  "createdAt": "2026-02-09T10:30:00.000Z"
-}
-```
-
-That's it. Give the `url` to the user — they can watch the agent work in real time.
-
-### Upload files for the agent to work on
-
-If the agent needs to work on your files (PDFs, CSVs, docs, etc.):
-
-```bash
-# 1. Get a signed upload URL
-FILE=$(curl -s -X POST https://api.rebyte.ai/v1/files \
-  -H "API_KEY: $REBYTE_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"filename": "report.pdf"}')
-
-# 2. Upload the file
-curl -X PUT "$(echo $FILE | jq -r '.uploadUrl')" \
-  -H "Content-Type: application/octet-stream" \
-  --data-binary @report.pdf
-
-# 3. Create a task with the file
-curl -X POST https://api.rebyte.ai/v1/tasks \
-  -H "API_KEY: $REBYTE_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"prompt\": \"Summarize this PDF\",
-    \"skills\": [\"pdf\"],
-    \"files\": [{\"id\": $(echo $FILE | jq '.id'), \"filename\": $(echo $FILE | jq '.filename')}]
-  }"
-```
-
-The file is automatically copied into the task's isolated VM when the task starts.
-
-### Make it shareable (optional)
-
-If the user viewing the URL isn't logged in to your org, set visibility to `public`:
-
-```bash
-curl -X PATCH https://api.rebyte.ai/v1/tasks/$TASK_ID/visibility \
-  -H "API_KEY: $REBYTE_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"visibility": "public"}'
 ```
 
 Response:
 ```json
 {
-  "visibility": "public",
-  "shareUrl": "https://app.rebyte.ai/share/550e8400-e29b-41d4-a716-446655440000"
+  "id": "550e8400-...",
+  "workspaceId": "660e8400-...",
+  "url": "https://app.rebyte.ai/run/550e8400-...",
+  "status": "running",
+  "createdAt": "2026-02-09T10:30:00.000Z"
 }
 ```
 
-The `shareUrl` is viewable by anyone — no login required.
+The `url` is live immediately. Give it to the user — they watch the agent work in real time. You do NOT need to poll or wait.
 
-### Poll for status (optional)
+## Create a Task with Files
 
-If you need to know when a task finishes (e.g., to chain work):
-
-```bash
-curl https://api.rebyte.ai/v1/tasks/$TASK_ID \
-  -H "API_KEY: $REBYTE_API_KEY"
-```
-
-### Send a follow-up (optional)
+If the agent needs to work on files (PDFs, CSVs, images, etc.):
 
 ```bash
-curl -X POST https://api.rebyte.ai/v1/tasks/$TASK_ID/prompts \
+# 1. Get a signed upload URL
+FILE_RESP=$(curl -s -X POST https://api.rebyte.ai/v1/files \
   -H "API_KEY: $REBYTE_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{\"prompt\": \"Now fix the critical issues you found\"}'
+  -d '{"filename": "data.csv"}')
+
+UPLOAD_URL=$(echo "$FILE_RESP" | jq -r '.uploadUrl')
+FILE_ID=$(echo "$FILE_RESP" | jq -r '.id')
+FILE_NAME=$(echo "$FILE_RESP" | jq -r '.filename')
+
+# 2. Upload the file content
+curl -s -X PUT "$UPLOAD_URL" \
+  -H "Content-Type: application/octet-stream" \
+  --data-binary @data.csv
+
+# 3. Create a task with the file attached
+curl -s -X POST https://api.rebyte.ai/v1/tasks \
+  -H "API_KEY: $REBYTE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"prompt\": \"Analyze this CSV and summarize findings\",
+    \"skills\": [\"data-analysis\"],
+    \"files\": [{\"id\": \"$FILE_ID\", \"filename\": \"$FILE_NAME\"}]
+  }"
 ```
 
-### Reuse a workspace (optional)
+The file is copied into the task's VM at `/code/{filename}` before the agent starts.
 
-Pass `workspaceId` from a previous create response to run a new task in the same VM. Skips provisioning and is much faster.
+## Create a Task with a GitHub Repo
 
 ```bash
-# First task — provisions a new VM
-RESP=$(curl -s -X POST https://api.rebyte.ai/v1/tasks \
-  -H "API_KEY: $REBYTE_API_KEY" -H "Content-Type: application/json" \
-  -d '{"prompt": "Set up the project", "githubUrl": "owner/repo"}')
-WS_ID=$(echo $RESP | jq -r '.workspaceId')
-
-# Second task — reuses the same VM (much faster)
 curl -s -X POST https://api.rebyte.ai/v1/tasks \
-  -H "API_KEY: $REBYTE_API_KEY" -H "Content-Type: application/json" \
+  -H "API_KEY: $REBYTE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "Add unit tests for the auth module",
+    "skills": ["deep-research"],
+    "githubUrl": "owner/repo",
+    "branchName": "main"
+  }'
+```
+
+## Share Results Publicly
+
+By default, tasks are visible only to org members. To share with anyone (no login required):
+
+```bash
+TASK_ID="the-task-id-from-create"
+curl -s -X PATCH "https://api.rebyte.ai/v1/tasks/$TASK_ID/visibility" \
+  -H "API_KEY: $REBYTE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"visibility": "public"}'
+```
+
+Response includes `shareUrl` — give this to anyone:
+```json
+{
+  "visibility": "public",
+  "shareUrl": "https://app.rebyte.ai/share/550e8400-..."
+}
+```
+
+## Check Task Status (Optional)
+
+You don't need to poll — the URL is live. But if you need to wait for completion:
+
+```bash
+curl -s "https://api.rebyte.ai/v1/tasks/$TASK_ID" \
+  -H "API_KEY: $REBYTE_API_KEY" | jq '{status, url}'
+```
+
+Statuses: `running`, `completed`, `failed`, `canceled`
+
+## Follow Up on a Task (Optional)
+
+Send additional instructions to a running or completed task:
+
+```bash
+curl -s -X POST "https://api.rebyte.ai/v1/tasks/$TASK_ID/prompts" \
+  -H "API_KEY: $REBYTE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Now fix the issues you found"}'
+```
+
+## Reuse a Workspace (Optional)
+
+Pass `workspaceId` from a previous task to skip VM provisioning (much faster):
+
+```bash
+# First task creates a new VM
+TASK1=$(curl -s -X POST https://api.rebyte.ai/v1/tasks \
+  -H "API_KEY: $REBYTE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Set up the project", "githubUrl": "owner/repo"}')
+WS_ID=$(echo "$TASK1" | jq -r '.workspaceId')
+
+# Second task reuses the same VM
+curl -s -X POST https://api.rebyte.ai/v1/tasks \
+  -H "API_KEY: $REBYTE_API_KEY" \
+  -H "Content-Type: application/json" \
   -d "{\"prompt\": \"Now add tests\", \"workspaceId\": \"$WS_ID\"}"
 ```
 
-## Lifecycle Examples (Python)
+## Delete a Task
 
-### Simplest: fire and forget
-
-```python
-from scripts.rebyte_client import RebyteClient
-
-client = RebyteClient()  # reads REBYTE_API_KEY from env
-
-task = client.create_task(
-    prompt="Analyze this repo for security vulnerabilities",
-    skills=["deep-research"],
-    github_url="my-org/my-repo"
-)
-
-# Just return the URL — the user watches it live
-print(f"Watch here: {task['url']}")
+```bash
+curl -s -X DELETE "https://api.rebyte.ai/v1/tasks/$TASK_ID" \
+  -H "API_KEY: $REBYTE_API_KEY"
 ```
 
-### With file upload
+Returns HTTP 204 (no content).
 
-```python
-# Upload a file for the agent to work on
-file_info = client.upload_file("report.pdf")
-
-task = client.create_task(
-    prompt="Summarize this PDF and extract key findings",
-    skills=["pdf"],
-    files=[file_info]
-)
-print(f"Watch here: {task['url']}")
-```
-
-### With multiple files
-
-```python
-# Upload multiple files
-files = [
-    client.upload_file("q4-revenue.csv"),
-    client.upload_file("q4-expenses.csv"),
-    client.upload_file("notes.pdf"),
-]
-
-task = client.create_task(
-    prompt="Analyze the Q4 financial data and summarize findings from the notes",
-    skills=["data-analysis", "pdf"],
-    files=files
-)
-print(f"Watch here: {task['url']}")
-```
-
-### With sharing
-
-```python
-task = client.create_task(
-    prompt="Generate a report on Q4 sales data",
-    skills=["data-analysis"]
-)
-
-# Make it public so anyone can view
-vis = client.set_visibility(task["id"], "public")
-print(f"Share this link: {vis['shareUrl']}")
-```
-
-### Full lifecycle: upload, create, share
-
-```python
-# 1. Upload files
-file_info = client.upload_file("data.csv")
-
-# 2. Create task with files and skills
-task = client.create_task(
-    prompt="Analyze this dataset and create a visualization",
-    skills=["data-analysis"],
-    files=[file_info]
-)
-
-# 3. Share with anyone
-vis = client.set_visibility(task["id"], "public")
-print(f"Share this link: {vis['shareUrl']}")
-```
-
-### With polling (when you need to chain work)
-
-```python
-task = client.create_task(prompt="Build a REST API with Express")
-result = client.wait_for_task(task["id"])
-print(f"Status: {result['status']}")
-
-# Now send a follow-up
-client.follow_up(task["id"], prompt="Add authentication with JWT")
-result = client.wait_for_task(task["id"])
-print(f"Done: {result['url']}")
-```
-
-## File Upload
-
-To give the agent files to work on:
-
-1. **`POST /v1/files`** with `{"filename": "data.csv"}` — returns `{id, filename, uploadUrl}`
-2. **`PUT {uploadUrl}`** with the file content
-3. **Pass to task** as `files: [{"id": "...", "filename": "..."}]`
-
-The file is automatically copied into the task's VM. Upload URLs expire in 1 hour.
-
-## Task Status
-
-| Status | Meaning |
-|--------|--------|
-| `running` | Any prompt is pending or running |
-| `completed` | All prompts done, latest succeeded |
-| `failed` | All prompts done, latest failed |
-| `canceled` | All prompts done, latest canceled |
-
-## Visibility Levels
-
-| Level | Who can view |
-|-------|-------------|
-| `private` | Only the API key owner |
-| `shared` | All organization members (default) |
-| `public` | Anyone with the link (read-only) |
-
-## Create Task Options
+## Create Task Parameters
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | prompt | string | Yes | Task description (max 100,000 chars) |
 | executor | string | No | `opencode` (default), `claude`, `gemini`, `codex` |
 | model | string | No | Model tier (default: `lite`) |
-| files | object[] | No | Files from `POST /v1/files`. Each: `{"id": "...", "filename": "..."}` |
-| skills | string[] | No | Skill slugs (e.g., `["pdf", "deep-research"]`) |
-| githubUrl | string | No | GitHub repo (e.g., `owner/repo`) |
-| branchName | string | No | Branch name (default: `main`) |
-| workspaceId | string | No | Reuse an existing workspace (same VM, repo, git state). Get from a previous create response. |
+| files | object[] | No | Files from POST /v1/files. Each: `{"id": "...", "filename": "..."}` |
+| skills | string[] | No | Skill slugs: `["deep-research", "pdf", "data-analysis"]` |
+| githubUrl | string | No | GitHub repo (`owner/repo`) |
+| branchName | string | No | Branch (default: `main`) |
+| workspaceId | string | No | Reuse a workspace from a previous task |
 
-## Configuration
+## All Endpoints
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `REBYTE_API_KEY` | Yes | - | API key from [app.rebyte.ai/settings/api-keys](https://app.rebyte.ai/settings/api-keys) |
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | /v1/files | Get signed upload URL for a file |
+| POST | /v1/tasks | Create a task |
+| GET | /v1/tasks | List tasks |
+| GET | /v1/tasks/:id | Get task with status and prompts |
+| POST | /v1/tasks/:id/prompts | Send a follow-up prompt |
+| PATCH | /v1/tasks/:id/visibility | Set private/shared/public |
+| DELETE | /v1/tasks/:id | Delete task |
 
-## Detailed Resources
+## Bundled Python Client
 
-- **API Reference**: See [references/api.md](references/api.md)
-- **Examples**: See [references/examples.md](references/examples.md)
+This skill includes a Python client and CLI at `scripts/`. To use them:
+
+```bash
+# Find the skill directory
+SKILL_DIR=$(find ~/.skills -maxdepth 1 -name '*skill-as-a-service*' -type d | head -1)
+
+# Use the CLI
+python3 "$SKILL_DIR/scripts/rebyte_cli.py" create --prompt "Hello world"
+python3 "$SKILL_DIR/scripts/rebyte_cli.py" get TASK_ID
+python3 "$SKILL_DIR/scripts/rebyte_cli.py" list
+
+# Or use the client in Python
+python3 -c "
+import sys; sys.path.insert(0, '$SKILL_DIR/scripts')
+from rebyte_client import RebyteClient
+client = RebyteClient()
+task = client.create_task(prompt='Hello world')
+print(task['url'])
+"
+```
+
+See [references/api.md](references/api.md) for full API details and [references/examples.md](references/examples.md) for more examples.

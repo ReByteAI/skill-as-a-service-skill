@@ -12,6 +12,45 @@ Get your key at [app.rebyte.ai/settings/api-keys](https://app.rebyte.ai/settings
 
 ## Endpoints
 
+### POST /v1/files
+
+Get a signed URL for uploading a file. After uploading, pass `{id, filename}` to the task creation endpoint.
+
+**Request:**
+```json
+{
+  "filename": "data.csv",
+  "contentType": "application/octet-stream"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| filename | string | Yes | Original filename (max 255 chars) |
+| contentType | string | No | MIME type (default: `application/octet-stream`) |
+
+**Response (201):**
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "filename": "data-550e.csv",
+  "uploadUrl": "https://storage.googleapis.com/..."
+}
+```
+
+The `filename` is a unique version of your original filename (with a short ID suffix). Use this `filename` (not your original) when passing to task creation.
+
+Upload the file content to `uploadUrl` with a PUT request:
+```bash
+curl -X PUT "$UPLOAD_URL" \
+  -H "Content-Type: application/octet-stream" \
+  --data-binary @yourfile.csv
+```
+
+Upload URLs expire in 1 hour.
+
+---
+
 ### POST /v1/tasks
 
 Create a new task. Blocks until the VM is provisioned and the first prompt is sent.
@@ -23,6 +62,7 @@ Create a new task. Blocks until the VM is provisioned and the first prompt is se
   "executor": "opencode",
   "model": "lite",
   "skills": ["deep-research", "pdf"],
+  "files": [{"id": "550e8400-...", "filename": "data-550e.csv"}],
   "githubUrl": "owner/repo",
   "branchName": "main",
   "workspaceId": "optional-uuid-to-reuse-vm"
@@ -34,6 +74,7 @@ Create a new task. Blocks until the VM is provisioned and the first prompt is se
 | prompt | string | Yes | Task description (max 100,000 chars) |
 | executor | string | No | `opencode` (default), `claude`, `gemini`, `codex` |
 | model | string | No | Model tier (default: `lite`) |
+| files | object[] | No | Files from POST /v1/files. Each: `{"id": "...", "filename": "..."}` |
 | skills | string[] | No | Skill slugs |
 | githubUrl | string | No | GitHub repo (`owner/repo`) |
 | branchName | string | No | Branch (default: `main`) |
@@ -143,7 +184,7 @@ Send a follow-up prompt to an existing task. The VM is resumed if stopped.
 
 ### PATCH /v1/tasks/:id/visibility
 
-Change the visibility of a task. Tasks default to `shared` (visible to org members). Set to `public` to get a shareable link that anyone can view without authentication.
+Change task visibility. Tasks default to `shared` (org members). Set to `public` to get a shareable link anyone can view.
 
 **Request:**
 ```json
@@ -164,9 +205,7 @@ Change the visibility of a task. Tasks default to `shared` (visible to org membe
 }
 ```
 
-The `shareUrl` field is only returned when visibility is `public`. Anyone with this URL can view the task results without logging in.
-
-**Visibility levels:**
+`shareUrl` is only returned when visibility is `public`.
 
 | Level | Who can view |
 |-------|-------------|

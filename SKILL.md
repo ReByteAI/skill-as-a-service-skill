@@ -7,8 +7,6 @@ description: |
   - User wants to run a coding agent with skills attached, without any local setup
   - User wants to fire off tasks to Claude Code (or other agents) from their own code
   - User needs to create a task with specific skills (deep research, PDF, data analysis, etc.)
-  - User wants to poll task status until completion
-  - User needs to send follow-up prompts to a running task
   - User wants to share task results with end users via a public link
   - User wants to run multiple tasks concurrently or in the same workspace
 
@@ -24,40 +22,35 @@ If you want to run a coding agent on a task and have it use specific skills (dee
 ## Task Lifecycle
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     TASK LIFECYCLE                           │
-│                                                             │
-│  1. CREATE           2. RUN              3. SHARE           │
-│  ┌──────────┐       ┌──────────┐       ┌──────────┐        │
-│  │ POST     │       │ GET      │       │ PATCH    │        │
-│  │ /tasks   │──────▶│ /tasks/  │──────▶│ /tasks/  │        │
-│  │          │       │ :id      │       │ :id/     │        │
-│  │ prompt   │       │          │       │ visibility│       │
-│  │ skills   │       │ Poll     │       │          │        │
-│  │ executor │       │ until    │       │ → public │        │
-│  │ repo     │       │ complete │       │ → shareUrl│       │
-│  └──────────┘       └────┬─────┘       └──────────┘        │
-│       │                  │                   │              │
-│       ▼                  ▼                   ▼              │
-│  Task starts in     Status:              Share the URL     │
-│  its own VM         completed/failed     with anyone       │
-│                          │                                  │
-│                          ▼                                  │
-│                   ┌──────────┐                              │
-│                   │ POST     │  (optional)                  │
-│                   │ /tasks/  │                              │
-│                   │ :id/     │                              │
-│                   │ prompts  │                              │
-│                   │          │                              │
-│                   │ Follow up│                              │
-│                   └──────────┘                              │
-└─────────────────────────────────────────────────────────────┘
+ 1. CREATE                  2. RETURN URL                3. SHARE (optional)
+ ┌──────────────┐           ┌──────────────┐            ┌──────────────┐
+ │ POST /tasks  │           │              │            │ PATCH        │
+ │              │──────────▶│  Give the    │───────────▶│ /tasks/:id/  │
+ │ prompt       │           │  task URL    │            │ visibility   │
+ │ skills       │           │  to the user │            │              │
+ │ executor     │           │              │            │ → public     │
+ │ repo         │           │  They watch  │            │ → shareUrl   │
+ └──────────────┘           │  it live     │            └──────────────┘
+                            └──────┬───────┘                   │
+                                   │                           ▼
+                                   │                    Anyone can view
+                                   │                    (no login needed)
+                                   │
+                          ┌────────▼───────┐
+                          │  Optional:     │
+                          │                │
+                          │  • Poll status │  GET /tasks/:id
+                          │  • Follow up   │  POST /tasks/:id/prompts
+                          │  • Reuse VM    │  POST /tasks (with workspaceId)
+                          └────────────────┘
 ```
 
-**The full cycle:**
+**The core flow is simple:**
 1. **Create** a task with a prompt, skills, and optionally a GitHub repo
-2. **Run** it asynchronously — poll for completion or use webhooks
-3. **Share** the result — set visibility to `public` and hand the share URL to anyone
+2. **Return the URL** to the user -- they can watch the task execute live in the browser
+3. **Optionally share** the result by setting visibility to `public` for a link anyone can view
+
+You don't need to poll for completion. You don't even need to know when it finishes. The URL is live from the moment the task starts -- the user sees the agent working in real time.
 
 ## Agent Instructions: Setup & Authentication
 
@@ -83,7 +76,7 @@ Before performing any action, check if the `REBYTE_API_KEY` environment variable
 
 ## Quick Start
 
-### Create a task with a skill
+### Create a task and return the URL
 
 ```bash
 curl -X POST https://api.rebyte.ai/v1/tasks \
@@ -106,18 +99,11 @@ Response (201):
 }
 ```
 
-The call blocks until the VM is provisioned and the first prompt is sent. The task is immediately queryable.
+That's it. Give the `url` to the user -- they can watch the agent work in real time. The task runs in the cloud regardless of whether anyone is watching.
 
-### Poll for completion
+### Make it shareable (optional)
 
-```bash
-curl https://api.rebyte.ai/v1/tasks/$TASK_ID \
-  -H "API_KEY: $REBYTE_API_KEY"
-```
-
-### Share the result
-
-After the task completes, set visibility to `public` to get a shareable link:
+If the user viewing the URL isn't logged in to your org, set visibility to `public`:
 
 ```bash
 curl -X PATCH https://api.rebyte.ai/v1/tasks/$TASK_ID/visibility \
@@ -136,7 +122,16 @@ Response:
 
 The `shareUrl` is viewable by anyone -- no login required.
 
-### Send a follow-up
+### Poll for status (optional)
+
+If you need to know when a task finishes (e.g., to chain work):
+
+```bash
+curl https://api.rebyte.ai/v1/tasks/$TASK_ID \
+  -H "API_KEY: $REBYTE_API_KEY"
+```
+
+### Send a follow-up (optional)
 
 ```bash
 curl -X POST https://api.rebyte.ai/v1/tasks/$TASK_ID/prompts \
@@ -145,14 +140,9 @@ curl -X POST https://api.rebyte.ai/v1/tasks/$TASK_ID/prompts \
   -d '{"prompt": "Now fix the critical issues you found"}'
 ```
 
-Response (201):
-```json
-{"promptId": "uuid-2"}
-```
+### Reuse a workspace (optional)
 
-### Reuse a workspace
-
-Pass `workspaceId` from a previous create response to run a new task in the same VM. This skips provisioning, reuses the git repo and state, and is significantly faster.
+Pass `workspaceId` from a previous create response to run a new task in the same VM. Skips provisioning and is much faster.
 
 ```bash
 # First task — provisions a new VM
@@ -167,45 +157,49 @@ curl -s -X POST https://api.rebyte.ai/v1/tasks \
   -d "{\"prompt\": \"Now add tests\", \"workspaceId\": \"$WS_ID\"}"
 ```
 
-### List tasks
+## Lifecycle Examples (Python)
 
-```bash
-curl "https://api.rebyte.ai/v1/tasks?limit=10" \
-  -H "API_KEY: $REBYTE_API_KEY"
-```
-
-### Delete a task
-
-```bash
-curl -X DELETE https://api.rebyte.ai/v1/tasks/$TASK_ID \
-  -H "API_KEY: $REBYTE_API_KEY"
-# Returns 204 No Content
-```
-
-## Full Lifecycle Example (Python)
+### Simplest: fire and forget
 
 ```python
 from scripts.rebyte_client import RebyteClient
 
 client = RebyteClient()  # reads REBYTE_API_KEY from env
 
-# 1. CREATE — spawn a task with skills
 task = client.create_task(
     prompt="Analyze this repo for security vulnerabilities",
     skills=["deep-research"],
     github_url="my-org/my-repo"
 )
-print(f"Task started: {task['url']}")
 
-# 2. RUN — wait for completion
+# Just return the URL -- the user watches it live
+print(f"Watch here: {task['url']}")
+```
+
+### With sharing
+
+```python
+task = client.create_task(
+    prompt="Generate a report on Q4 sales data",
+    skills=["data-analysis"]
+)
+
+# Make it public so anyone can view
+vis = client.set_visibility(task["id"], "public")
+print(f"Share this link: {vis['shareUrl']}")
+```
+
+### With polling (when you need to chain work)
+
+```python
+task = client.create_task(prompt="Build a REST API with Express")
 result = client.wait_for_task(task["id"])
 print(f"Status: {result['status']}")
 
-# 3. SHARE — make it public and get the share URL
-visibility = client.set_visibility(task["id"], "public")
-print(f"Share this link: {visibility['shareUrl']}")
-
-# Done — anyone with that link can view the results
+# Now send a follow-up
+client.follow_up(task["id"], prompt="Add authentication with JWT")
+result = client.wait_for_task(task["id"])
+print(f"Done: {result['url']}")
 ```
 
 ## Task Status

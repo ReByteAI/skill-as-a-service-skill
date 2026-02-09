@@ -1,35 +1,37 @@
 ---
 name: skill-as-a-service
 description: |
-  Run Rebyte skills as cloud API calls. Create tasks with skills attached,
-  poll for completion, send follow-ups, and view results.
+  Run coding agents (Claude Code, Gemini, Codex) with specific skills in the cloud via API.
+  No local setup, no CLI installation, no config files -- just an API key.
   Use when:
-  - User wants to run a skill in the cloud via API
-  - User needs to create a task with specific skills
+  - User wants to run a coding agent with skills attached, without any local setup
+  - User wants to fire off tasks to Claude Code (or other agents) from their own code
+  - User needs to create a task with specific skills (deep research, PDF, data analysis, etc.)
   - User wants to poll task status until completion
   - User needs to send follow-up prompts to a running task
-  - User wants to list or manage API-created tasks
-  - User wants to run multiple tasks in the same workspace/VM
+  - User wants to run multiple tasks concurrently or in the same workspace
 
-  Requires a Rebyte API key.
+  Requires a REBYTE_API_KEY environment variable.
 ---
 
-# Skill as a Service
+# Coding Agents with Skills, via API
 
-Run any Rebyte skill as a cloud API call. Specify the task, pick an executor and skills; the cloud handles provisioning and execution.
+Run coding agents like Claude Code, Gemini CLI, or Codex with specific skills -- all from a single API key. No local setup, no CLI installation, no configuration files. Each task gets its own isolated cloud environment with the skills you need.
+
+If you want to run a coding agent on a task and have it use specific skills (deep research, PDF processing, data analysis, etc.), this is for you. As long as you have a `REBYTE_API_KEY`, you can fire off as many tasks as you want without touching any local settings.
 
 ## Agent Instructions: Setup & Authentication
 
 ### Step 1: Verify API Key
 Before performing any action, check if the `REBYTE_API_KEY` environment variable is available.
-- **If missing**: Pause and ask the user: *"I need a Rebyte API key to proceed. You can get one at [app.rebyte.ai/settings/api-keys](https://app.rebyte.ai/settings/api-keys). Please provide your key or set the `REBYTE_API_KEY` environment variable."*
+- **If missing**: Pause and ask the user: *"I need an API key to proceed. You can get one at [app.rebyte.ai/settings/api-keys](https://app.rebyte.ai/settings/api-keys). Please provide your key or set the `REBYTE_API_KEY` environment variable."*
 - **If present**: Continue with the user's request.
 
 ## API Overview
 
 **Base URL:** `https://api.rebyte.ai/v1`
 
-**Authentication:** `API_KEY` header with your Rebyte API key.
+**Authentication:** `API_KEY` header with your API key.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|

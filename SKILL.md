@@ -9,6 +9,7 @@ description: |
   - User wants to poll task status until completion
   - User needs to send follow-up prompts to a running task
   - User wants to list or manage API-created tasks
+  - User wants to run multiple tasks in the same workspace/VM
 
   Requires a Rebyte API key.
 ---
@@ -56,6 +57,7 @@ Response (201):
 ```json
 {
   "id": "550e8400-e29b-41d4-a716-446655440000",
+  "workspaceId": "660e8400-e29b-41d4-a716-446655440001",
   "url": "https://app.rebyte.ai/run/550e8400-e29b-41d4-a716-446655440000",
   "status": "running",
   "createdAt": "2026-02-09T10:30:00.000Z"
@@ -107,6 +109,23 @@ Response (201):
 {"promptId": "uuid-2"}
 ```
 
+### Reuse a workspace
+
+Pass `workspaceId` from a previous create response to run a new task in the same VM. This skips provisioning, reuses the git repo and state, and is significantly faster.
+
+```bash
+# First task — provisions a new VM
+RESP=$(curl -s -X POST https://api.rebyte.ai/v1/tasks \
+  -H "API_KEY: $REBYTE_API_KEY" -H "Content-Type: application/json" \
+  -d '{"prompt": "Set up the project", "githubUrl": "owner/repo"}')
+WS_ID=$(echo $RESP | jq -r '.workspaceId')
+
+# Second task — reuses the same VM (much faster)
+curl -s -X POST https://api.rebyte.ai/v1/tasks \
+  -H "API_KEY: $REBYTE_API_KEY" -H "Content-Type: application/json" \
+  -d "{\"prompt\": \"Now add tests\", \"workspaceId\": \"$WS_ID\"}"
+```
+
 ### List tasks
 
 ```bash
@@ -147,8 +166,16 @@ client.follow_up(task["id"], prompt="Now summarize the extracted text")
 result = client.wait_for_task(task["id"])
 print(f"Done: {result['url']}")
 
+# Create another task in the same workspace (reuses VM)
+task2 = client.create_task(
+    prompt="Convert summaries to markdown",
+    workspace_id=task["workspaceId"]
+)
+result2 = client.wait_for_task(task2["id"])
+
 # Clean up
 client.delete_task(task["id"])
+client.delete_task(task2["id"])
 ```
 
 ## Using the CLI
@@ -189,7 +216,7 @@ python3 scripts/rebyte_cli.py delete TASK_ID
 | skills | string[] | No | Skill slugs (e.g., `["pdf", "deep-research"]`) |
 | githubUrl | string | No | GitHub repo (e.g., `owner/repo`) |
 | branchName | string | No | Branch name (default: `main`) |
-| workspaceId | string | No | Reuse existing workspace |
+| workspaceId | string | No | Reuse an existing workspace (same VM, repo, git state). Get from a previous create response. |
 
 ## Configuration
 

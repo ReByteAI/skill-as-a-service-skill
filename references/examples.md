@@ -39,6 +39,33 @@ task = client.create_task(
 result = client.wait_for_task(task["id"])
 ```
 
+## Reuse a Workspace
+
+Pass `workspaceId` from a previous task to run in the same VM. Skips provisioning and is much faster.
+
+```python
+# First task provisions a new VM
+task1 = client.create_task(
+    prompt="Set up the project structure",
+    github_url="my-org/my-repo"
+)
+result1 = client.wait_for_task(task1["id"])
+
+# Second task reuses the same VM — no provisioning delay
+task2 = client.create_task(
+    prompt="Now add authentication",
+    workspace_id=task1["workspaceId"]
+)
+result2 = client.wait_for_task(task2["id"])
+
+# Third task, same workspace
+task3 = client.create_task(
+    prompt="Add rate limiting",
+    workspace_id=task1["workspaceId"]
+)
+result3 = client.wait_for_task(task3["id"])
+```
+
 ## Follow-Up Prompts
 
 ```python
@@ -97,23 +124,24 @@ for r in results:
     print(f"{r['title']}: {r['status']} - {r['url']}")
 ```
 
-## Custom Polling
+## Sequential Tasks in Same Workspace
 
 ```python
-import time
-
 client = RebyteClient()
-task = client.create_task(prompt="Long running analysis")
 
-while True:
-    status = client.get_task(task["id"])
-    print(f"Status: {status['status']}, Prompts: {len(status['prompts'])}")
+# First task provisions the VM
+task = client.create_task(
+    prompt="Clone and analyze the repo",
+    github_url="my-org/my-repo"
+)
+result = client.wait_for_task(task["id"])
+ws_id = task["workspaceId"]
 
-    if status["status"] in ("completed", "failed", "canceled"):
-        break
-    time.sleep(5)
-
-print(f"Final: {status['url']}")
+# Run a sequence of tasks in the same workspace
+for step in ["Fix linting errors", "Add missing tests", "Update README"]:
+    t = client.create_task(prompt=step, workspace_id=ws_id)
+    r = client.wait_for_task(t["id"])
+    print(f"{r['title']}: {r['status']}")
 ```
 
 ## Error Handling

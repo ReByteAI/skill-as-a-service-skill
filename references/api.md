@@ -24,7 +24,8 @@ Create a new task. Blocks until the VM is provisioned and the first prompt is se
   "model": "lite",
   "skills": ["deep-research", "pdf"],
   "githubUrl": "owner/repo",
-  "branchName": "main"
+  "branchName": "main",
+  "workspaceId": "optional-uuid-to-reuse-vm"
 }
 ```
 
@@ -36,17 +37,20 @@ Create a new task. Blocks until the VM is provisioned and the first prompt is se
 | skills | string[] | No | Skill slugs |
 | githubUrl | string | No | GitHub repo (`owner/repo`) |
 | branchName | string | No | Branch (default: `main`) |
-| workspaceId | string | No | Reuse existing workspace UUID |
+| workspaceId | string | No | Reuse an existing workspace UUID. Skips provisioning, reuses VM and git state. |
 
 **Response (201):**
 ```json
 {
   "id": "550e8400-e29b-41d4-a716-446655440000",
+  "workspaceId": "660e8400-e29b-41d4-a716-446655440001",
   "url": "https://app.rebyte.ai/run/550e8400-e29b-41d4-a716-446655440000",
   "status": "running",
   "createdAt": "2026-02-09T10:30:00.000Z"
 }
 ```
+
+Save `workspaceId` to create subsequent tasks in the same VM.
 
 ---
 
